@@ -1,0 +1,27 @@
+<resources>
+<string name="settings_page_brand">CLEANYOURTV</string>
+<string name="settings_page_appearance_title">Appearance</string>
+<string name="settings_page_appearance_hint">Make your home feel like yours.</string>
+<string name="settings_page_motion_title">Motion</string>
+<string name="settings_page_motion_hint">Choose how your home moves.</string>
+<string name="settings_page_system_title">System</string>
+<string name="settings_page_system_hint">Your home app and TV preferences.</string>
+<string name="settings_page_back_label">Back</string>
+<string name="settings_page_saved">Changes save automatically</string>
+<string name="settings_page_nav_hint">Use the arrow keys to browse. Press OK to select.</string>
+<string name="settings_page_selected">Selected</string>
+<string name="settings_page_custom">Custom</string>
+<string name="settings_page_following">Following theme</string>
+<string name="settings_page_follow_title">Follow theme</string>
+<string name="settings_page_follow_hint">Use the theme’s appearance, motion and wallpaper settings.</string>
+<string name="settings_page_animations_title">Animations</string>
+<string name="settings_page_animations_hint">Smooth focus and transitions</string>
+<string name="settings_page_advanced_hint">Extra movement and visual detail</string>
+<string name="settings_page_advanced_note">Available when animations are on.</string>
+<string name="settings_page_home_hint">Choose the app that opens when you press Home.</string>
+<string name="settings_page_tv_hint">Display, sound, network and device preferences</string>
+<string name="settings_page_wallpaper_hint">Choose an image, use your theme, or keep a plain background.</string>
+<string name="settings_page_wallpaper_theme">Use the current theme’s wallpaper</string>
+<string name="settings_page_wallpaper_image">Still image</string>
+<string name="settings_page_wallpaper_plain">Plain background</string>
+</resources>

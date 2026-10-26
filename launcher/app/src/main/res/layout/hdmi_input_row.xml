@@ -1,0 +1,13 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="74dp"
+    android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp"
+    android:focusable="true" android:clickable="true" android:background="@drawable/hdmi_row_focus">
+    <ImageView android:id="@+id/hdmiRowIcon" android:layout_width="25dp" android:layout_height="25dp" android:layout_marginEnd="14dp" android:src="@drawable/ic_input" android:tint="@color/hdmi_row_ink" android:duplicateParentState="true" android:importantForAccessibility="no"/>
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:duplicateParentState="true">
+        <TextView android:id="@+id/hdmiRowTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="17sp" android:fontFamily="@font/inter_semibold" android:includeFontPadding="false" android:singleLine="true" android:ellipsize="end" android:textColor="@color/hdmi_row_ink" android:duplicateParentState="true"/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:orientation="horizontal" android:gravity="center_vertical" android:duplicateParentState="true">
+            <View android:id="@+id/hdmiRowDot" android:layout_width="6dp" android:layout_height="6dp" android:layout_marginEnd="7dp"/>
+            <TextView android:id="@+id/hdmiRowSubtitle" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textSize="13sp" android:fontFamily="@font/inter_regular" android:includeFontPadding="false" android:singleLine="true" android:ellipsize="end" android:textColor="@color/hdmi_row_secondary" android:duplicateParentState="true"/>
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:text="›" android:textSize="24sp" android:textColor="@color/hdmi_row_ink" android:duplicateParentState="true" android:importantForAccessibility="no"/>
+</LinearLayout>

@@ -1,0 +1,60 @@
+Google Material Symbols Sharp
+Copyright Google LLC. Licensed under the Apache License, Version 2.0.
+The complete license is in Google-Material-Symbols-LICENSE.txt.
+Official source: https://github.com/google/material-design-icons
+Style: materialsymbolssharp, 24px. Existing drawable intrinsic dimensions retained.
+SVG paths converted to Android VectorDrawable; no runtime download or font dependency.
+Brand/device logos and user photos are separate assets and were not changed.
+
+Resource to upstream symbol:
+ic_add.xml -> symbols/web/add/materialsymbolssharp/add_24px.svg
+ic_apps.xml -> symbols/web/apps/materialsymbolssharp/apps_24px.svg
+ic_av.xml -> symbols/web/settings_input_component/materialsymbolssharp/settings_input_component_24px.svg
+ic_check.xml -> symbols/web/check/materialsymbolssharp/check_24px.svg
+ic_chevron_right.xml -> symbols/web/chevron_right/materialsymbolssharp/chevron_right_24px.svg
+ic_close.xml -> symbols/web/close/materialsymbolssharp/close_24px.svg
+ic_edit.xml -> symbols/web/edit/materialsymbolssharp/edit_24px.svg
+ic_ethernet.xml -> symbols/web/settings_ethernet/materialsymbolssharp/settings_ethernet_24px.svg
+ic_hdmi_device_box.xml -> symbols/web/settop_component/materialsymbolssharp/settop_component_24px.svg
+ic_hdmi_device_computer.xml -> symbols/web/desktop_windows/materialsymbolssharp/desktop_windows_24px.svg
+ic_hdmi_device_display.xml -> symbols/web/tv/materialsymbolssharp/tv_24px.svg
+ic_hdmi_device_game.xml -> symbols/web/stadia_controller/materialsymbolssharp/stadia_controller_24px.svg
+ic_hdmi_device_unknown.xml -> symbols/web/settings_input_hdmi/materialsymbolssharp/settings_input_hdmi_24px.svg
+ic_home_settings.xml -> symbols/web/home/materialsymbolssharp/home_24px.svg
+ic_info.xml -> symbols/web/info/materialsymbolssharp/info_24px.svg
+ic_input.xml -> symbols/web/settings_input_hdmi/materialsymbolssharp/settings_input_hdmi_24px.svg
+ic_launcher_sound.xml -> symbols/web/volume_up/materialsymbolssharp/volume_up_24px.svg
+ic_liquid_browser.xml -> symbols/web/language/materialsymbolssharp/language_24px.svg
+ic_liquid_cast.xml -> symbols/web/cast/materialsymbolssharp/cast_24px.svg
+ic_liquid_gallery.xml -> symbols/web/photo_library/materialsymbolssharp/photo_library_24px.svg
+ic_liquid_layers.xml -> symbols/web/layers/materialsymbolssharp/layers_24px.svg
+ic_liquid_media.xml -> symbols/web/play_circle/materialsymbolssharp/play_circle_24px.svg
+ic_liquid_music.xml -> symbols/web/music_note/materialsymbolssharp/music_note_24px.svg
+ic_livetv.xml -> symbols/web/live_tv/materialsymbolssharp/live_tv_24px.svg
+ic_lock.xml -> symbols/web/lock/materialsymbolssharp/lock_24px.svg
+ic_picture.xml -> symbols/web/wallpaper/materialsymbolssharp/wallpaper_24px.svg
+ic_saturn.xml -> symbols/web/planet/materialsymbolssharp/planet_24px.svg
+ic_scene_clock.xml -> symbols/web/schedule/materialsymbolssharp/schedule_24px.svg
+ic_scene_names.xml -> symbols/web/label/materialsymbolssharp/label_24px.svg
+ic_scene_orbit.xml -> symbols/web/orbit/materialsymbolssharp/orbit_24px.svg
+ic_scene_pause.xml -> symbols/web/pause/materialsymbolssharp/pause_24px.svg
+ic_scene_play.xml -> symbols/web/play_arrow/materialsymbolssharp/play_arrow_24px.svg
+ic_scene_reset.xml -> symbols/web/restart_alt/materialsymbolssharp/restart_alt_24px.svg
+ic_scene_speed.xml -> symbols/web/speed/materialsymbolssharp/speed_24px.svg
+ic_settings.xml -> symbols/web/settings/materialsymbolssharp/settings_24px.svg
+ic_settings_outline.xml -> symbols/web/settings/materialsymbolssharp/settings_24px.svg
+ic_swap_vert.xml -> symbols/web/swap_vert/materialsymbolssharp/swap_vert_24px.svg
+ic_weather_cloud.xml -> symbols/web/cloud/materialsymbolssharp/cloud_24px.svg
+ic_weather_fog.xml -> symbols/web/foggy/materialsymbolssharp/foggy_24px.svg
+ic_weather_night.xml -> symbols/web/dark_mode/materialsymbolssharp/dark_mode_24px.svg
+ic_weather_partly_day.xml -> symbols/web/partly_cloudy_day/materialsymbolssharp/partly_cloudy_day_24px.svg
+ic_weather_partly_night.xml -> symbols/web/partly_cloudy_night/materialsymbolssharp/partly_cloudy_night_24px.svg
+ic_weather_rain.xml -> symbols/web/rainy/materialsymbolssharp/rainy_24px.svg
+ic_weather_snow.xml -> symbols/web/weather_snowy/materialsymbolssharp/weather_snowy_24px.svg
+ic_weather_storm.xml -> symbols/web/thunderstorm/materialsymbolssharp/thunderstorm_24px.svg
+ic_weather_sunny.xml -> symbols/web/sunny/materialsymbolssharp/sunny_24px.svg
+ic_wifi.xml -> symbols/web/wifi/materialsymbolssharp/wifi_24px.svg
+profile_account_fallback.xml -> symbols/web/account_circle/materialsymbolssharp/account_circle_24px.svg
+profile_add_account.xml -> symbols/web/person_add/materialsymbolssharp/person_add_24px.svg
+settings_page_back.xml -> symbols/web/arrow_back/materialsymbolssharp/arrow_back_24px.svg
+library_check.xml -> symbols/web/check_box/materialsymbolssharp/check_box_24px.svg

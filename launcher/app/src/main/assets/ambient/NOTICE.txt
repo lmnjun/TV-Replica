@@ -1,0 +1,66 @@
+AMBIENT SCENES — SOURCE MATERIAL AND IMPLEMENTATION
+
+Earth texture: NASA / Visible Earth, Blue Marble (2002), Land Surface,
+Ocean Color and Sea Ice. Original 2048 x 1024 JPEG downloaded unmodified:
+https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_2048.jpg
+NASA background:
+https://science.nasa.gov/earth/earth-observatory/the-blue-marble-true-color-global-imagery-at-1km-resolution/
+NASA media usage guidelines:
+https://www.nasa.gov/nasa-brand-center/images-and-media/
+NASA is acknowledged as the image source. No NASA logo is included and no
+NASA endorsement is implied. The texture is a historical composite, not
+live satellite imagery. Lighting and location projection are original
+application code; the terminator is an approximate solar calculation.
+
+Night texture: NASA Scientific Visualization Studio, Earth At Night (WMS),
+item 2916, released 16 February 2004. Original 2048 x 1024 PNG unmodified:
+https://svs.gsfc.nasa.gov/vis/a000000/a002900/a002916/earthatnight-2048.png
+Source, description and credits: https://svs.gsfc.nasa.gov/2916/
+Data courtesy Marc Imhoff (NASA/GSFC) and Christopher Elvidge (NOAA/NGDC).
+Image by Craig Mayhew (NASA/GSFC) and Robert Simmon (NASA/GSFC).
+This DMSP/OLS historical city-lights composite is not a real-time view of
+lighting or present-day urban development. Day and night maps use the same
+equirectangular coordinates and are blended using approximate current
+solar position. Display brightness/colour and the globe's atmospheric rim
+are application visualisation choices, not calibrated radiance measures.
+
+High-detail Earth maps (preferred when GL_MAX_TEXTURE_SIZE >= 4096):
+Day: NASA / Visible Earth, Blue Marble (2002), Land Surface, Ocean Color
+and Sea Ice. Official 8192 x 4096 PNG source:
+https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57730/land_ocean_ice_8192.png
+Bundled earth_nasa_day_4096.jpg is a 4096 x 2048 JPEG derivative (quality
+96), uniformly downsampled offline with macOS sips. No crop, coordinate
+change, geographic reconstruction or AI generation was applied.
+Night: NASA Earth Observatory, Earth at Night (2016), Suomi NPP VIIRS
+Black Marble global composite. Official 13500 x 6750 JPEG source:
+https://assets.science.nasa.gov/content/dam/science/esd/eo/images/imagerecords/144000/144898/BlackMarble_2016_3km.jpg
+Official maps and credits:
+https://science.nasa.gov/earth/earth-observatory/earth-at-night/maps/
+https://svs.gsfc.nasa.gov/30876/
+NASA Earth Observatory image by Joshua Stevens, using Suomi NPP VIIRS
+data from Miguel Roman, NASA Goddard Space Flight Center.
+Bundled earth_nasa_night_2016_4096.jpg is a 4096 x 2048 JPEG derivative
+(quality 96), uniformly downsampled offline with macOS sips. It remains
+historical 2016 data, not current or live city-light imagery. The original
+full-resolution sources are not included in the application.
+Both derivatives retain the same global equirectangular coordinates as
+the 2K fallback maps above. Uploads are sequential and CPU bitmaps are
+recycled after each upload. The renderer uses bounded trilinear mipmaps
+with the default 1x anisotropy and a fixed 1920 x 1080 maximum surface
+budget. The blue atmospheric rim is computed in the existing opaque
+planet pass, without a second translucent globe. No depth test or depth
+clear is used; a depth-free EGL configuration is requested.
+Navigation never changes map or surface resolution.
+
+Weather clouds: original deterministic procedural RGBA texture generated
+for this application; no stock image or Apple asset. Sky, precipitation,
+cloud movement and lightning are original Canvas drawing code. Weather
+uses Open-Meteo WMO observations and existing saved approximate/device
+coordinates. It is a stylised visualisation, not a radar map or forecast.
+Weather data: Open-Meteo, https://open-meteo.com/ (CC BY 4.0 attribution).
+Cloud PNG: 1024 x 256; seeded periodic value-noise layers 8/16/32/64,
+weights .54/.28/.13/.05, seed 16704, vertical sine envelope.
+
+Split-flap clock: original Canvas/Camera implementation, inspired by
+physical split-flap clocks. No Fliqlo software, artwork or proprietary
+assets are included. Typeface uses the app's existing Inter font.

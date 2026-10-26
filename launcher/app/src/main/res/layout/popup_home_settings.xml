@@ -1,0 +1,8 @@
+<com.gathin.tvhome.FrostedPanel xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="280dp" android:layout_height="wrap_content" android:orientation="vertical" android:padding="0dp">
+<LinearLayout android:id="@+id/menuHeader" android:layout_width="match_parent" android:layout_height="52dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="18dp">
+<ImageView android:id="@+id/menuIcon" android:layout_width="18dp" android:layout_height="18dp" android:src="@drawable/ic_settings_outline" android:tint="#E6FFFFFF" android:importantForAccessibility="no"/>
+<View android:id="@+id/menuDivider" android:layout_width="0.6dp" android:layout_height="12dp" android:layout_marginStart="8dp" android:layout_marginEnd="10.4dp" android:background="#40FFFFFF" android:visibility="gone" android:importantForAccessibility="no"/>
+<TextView android:id="@+id/menuTitle" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:gravity="center_vertical" android:layout_marginStart="10dp" android:text="Settings" android:singleLine="true" android:ellipsize="end" android:textColor="#FFFFFFFF" android:textSize="18sp" android:fontFamily="@font/inter_semibold" android:includeFontPadding="false"/>
+</LinearLayout>
+<LinearLayout android:id="@+id/rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="12dp" android:paddingEnd="12dp" android:paddingTop="0dp" android:paddingBottom="12dp"/>
+</com.gathin.tvhome.FrostedPanel>

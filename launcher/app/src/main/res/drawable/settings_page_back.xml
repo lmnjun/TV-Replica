@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Google Material Symbols Sharp; Apache-2.0. See assets/Google-Material-Symbols-Sharp-NOTICE.txt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="18dp" android:height="18dp" android:viewportWidth="960" android:viewportHeight="960">
+    <group android:translateX="-0" android:translateY="960">
+        <path android:fillColor="#FFFFFFFF" android:pathData="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"/>
+    </group>
+</vector>

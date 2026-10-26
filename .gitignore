@@ -1,0 +1,41 @@
+# Local Android/Gradle state and generated outputs
+.gradle/
+**/.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.apks
+*.hprof
+*.log
+.DS_Store
+.idea/
+*.iml
+
+# Signing, ADB, account and environment credentials
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.pem
+*.p12
+*.pfx
+*.key
+adbkey
+adbkey.pub
+.android/
+**/adbkey/
+
+# Device exports and local audit material
+backup/
+backups/
+captures/
+screenshots/
+reports/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+__pycache__/
+*.pyc

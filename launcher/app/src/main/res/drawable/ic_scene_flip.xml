@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original split-flap display glyph with square frame, hinge seam and two digit panels. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M2,4H22V20H2ZM4,6V18H20V6Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M11,5H13V19H11ZM3,11H21V13H3ZM7,7H9V10H7ZM7,14H9V17H7ZM14,7H18V10H16V9H14ZM16,14H18V17H14V15H16Z"/>
+</vector>

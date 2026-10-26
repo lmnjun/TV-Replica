@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original sun/cloud/rain glyph; flat fill and square rain strokes match the sharp icon set. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M16,1H18V3H16ZM21.2,2.4L22.6,3.8L21.2,5.2L19.8,3.8ZM22,6H24V8H22ZM17,4A3,3 0,1 0,17,10A3,3 0,1 0,17,4Z"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M6.5,17C4,17 2,15 2,12.5C2,10.3 3.6,8.4 5.8,8.1C6.7,5.6 9.7,4.3 12.1,5.4C14,6.2 15.2,8 15.4,10H17.5C20,10 22,12 22,14.5C22,15.9 21,17 19.5,17ZM7,18H9L7,22H5ZM12,18H14L12,22H10ZM17,18H19L17,22H15Z"/>
+</vector>
