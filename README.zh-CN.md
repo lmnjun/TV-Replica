@@ -26,6 +26,8 @@ cd TV-Replica
 (cd launcher && ./gradlew testDebugUnitTest lintRelease assembleRelease)
 ```
 
+部分语言的翻译尚未完成，缺失文字会回退为英文。Lint 会将缺失翻译列为警告，其他错误仍会阻止构建。
+
 通过 `ANDROID_HOME` 或本地 `launcher/local.properties` 配置 SDK。安装包输出至 `launcher/app/build/outputs/apk/release/`。
 
 目前保留应用 ID `com.gathin.tvhome`。开发构建使用本机生成的 debug 签名，仓库不包含签名密钥。覆盖已有应用需要相同签名，请保留自己的签名及设备数据。

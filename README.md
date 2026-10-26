@@ -26,6 +26,8 @@ cd TV-Replica
 (cd launcher && ./gradlew testDebugUnitTest lintRelease assembleRelease)
 ```
 
+Translations are incomplete in some locales; missing strings fall back to English. Lint reports missing translations as warnings, while other errors still fail the build.
+
 Configure the SDK with `ANDROID_HOME` or an untracked `launcher/local.properties`. The generated APK is under `launcher/app/build/outputs/apk/release/`.
 
 The application ID remains `com.gathin.tvhome` for compatibility with the inherited launcher integration. Release builds currently use a locally generated debug signing key for development. No signing key is included. Updating an existing installation requires the same signing identity; preserve your own key and device data.

@@ -38,6 +38,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    lint {
+        // Existing locales are incomplete; Android falls back to default English strings.
+        // Keep these findings visible while other lint errors still fail the build.
+        warning 'MissingTranslation'
+    }
 }
 
 dependencies {
