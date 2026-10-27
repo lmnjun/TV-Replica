@@ -37,7 +37,7 @@ final class HeaderPillContainer extends LinearLayout {
         if (profile.getParent() instanceof ViewGroup) ((ViewGroup)profile.getParent()).removeView(profile);
         if (settings.getParent() instanceof ViewGroup) ((ViewGroup)settings.getParent()).removeView(settings);
         profile.useSharedSurface(true);
-        profile.showConnectionBadge(true);
+        profile.showConnectionBadge(false);
         addView(profile, new LinearLayout.LayoutParams(-2, dp(34)));
         divider = new View(context);
         divider.setBackgroundColor(0x30FFFFFF);

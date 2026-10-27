@@ -9,8 +9,9 @@
 ## 功能
 
 - 每行六个应用卡片、底部 Dock、直接在主页排列应用。
-- Profile pill 内显示 LAN / Wi-Fi / 离线状态圆标。
-- 第一层菜单显示姓名与邮箱，以及 Add profile、Connection、Input、All Settings。Android 权限与位置设置允许时，Connection 显示当前 Wi-Fi 名称。
+- Profile pill 只显示照片与姓名，菜单不显示页面标题和分隔线。
+- 第一层菜单显示姓名与邮箱，以及 Add profile、Connection、Input、All Settings。进入 Connection 后才显示当前 Wi-Fi 名称（取决于 Android 权限与位置设置）。
+- 启动器菜单中，Enter／OK／右键确认，左键／返回键返回，上下键移动选项；主页应用卡片保留正常方向导航。
 - HDMI 连接状态与设备识别；可识别内容取决于电视固件。
 - Saturn、Earth、Weather、Flip Clock 场景，各有独立设置，并提供本地屏保。
 - 地球使用 4K 昼夜贴图，渲染上限固定为 1080p，支持安全的 2K 回退和旋转、倾斜、缩放。

@@ -851,18 +851,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         current.setOnKeyListener((v, key, event) -> key == KeyEvent.KEYCODE_DPAD_LEFT
                 || key == KeyEvent.KEYCODE_DPAD_RIGHT || key == KeyEvent.KEYCODE_DPAD_UP);
         LinearLayout.LayoutParams identity = new LinearLayout.LayoutParams(-1, (int)(64 * density));
-        identity.bottomMargin = (int)(4 * density); rows.addView(current, identity);
-        View identityDivider = new View(this);
-        identityDivider.setBackgroundColor(0x4D808080);
-        identityDivider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        LinearLayout.LayoutParams divider = new LinearLayout.LayoutParams(-1, Math.max(1, Math.round(.5f * density)));
-        divider.setMarginStart(Math.round(12 * density)); divider.setMarginEnd(Math.round(12 * density));
-        divider.bottomMargin = Math.round(6 * density); rows.addView(identityDivider, divider);
+        identity.bottomMargin = Math.round(8 * density); rows.addView(current, identity);
         popup.row(rows, R.drawable.profile_add_account, "Add profile", null,
                 () -> popup.dismissThen(this::addGoogleProfile));
         ConnectionMonitor.Snapshot connection = connectionMonitor.cachedSnapshot();
         popup.row(rows, connection.transport == ConnectionMonitor.Transport.WIFI
-                        ? R.drawable.ic_wifi : R.drawable.ic_ethernet, "Connection", connection.ssid.isEmpty() ? connection.label : connection.ssid,
+                        ? R.drawable.ic_wifi : R.drawable.ic_ethernet, "Connection", null,
                 () -> popup.push("Connection", () -> headerConnection(popup)));
         popup.row(rows, R.drawable.ic_input, "Input", null,
                 () -> popup.push("Inputs", () -> headerInputs(popup)));
@@ -1413,7 +1407,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
             if (event.getAction() == KeyEvent.ACTION_UP
                     && (event.getKeyCode() == KeyEvent.KEYCODE_DPAD_CENTER
                     || event.getKeyCode() == KeyEvent.KEYCODE_ENTER
-                    || event.getKeyCode() == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+                    || event.getKeyCode() == KeyEvent.KEYCODE_NUMPAD_ENTER
+                    || event.getKeyCode() == KeyEvent.KEYCODE_DPAD_RIGHT)) {
                 suppressPendingSelect = false; suppressArrangeConfirmUp = false;
             }
             return true;

@@ -32,8 +32,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.function.Function;
@@ -64,17 +62,17 @@ final class HeaderStackPopup extends PopupWindow {
     private final boolean warmupOnly;
     private final SoundKeyLayout windowRoot;
     private final FrameLayout chrome;
-    private final LinearLayout panel, heading;
+    private final LinearLayout panel;
     private final FrameLayout body;
-    private final TextView title, footer;
-    private final View headingDivider;
+    private final TextView footer;
     private final Surface surface;
     private final List<Page> pages = new ArrayList<>();
     private final List<FocusState> underlayFocus = new ArrayList<>();
     private final LauncherSounds sounds;
     private final Typeface regularFont, mediumFont, semiboldFont;
-    private final Map<String, Integer> headingHeights = new HashMap<>();
-    private int headingWidth = -1;
+    private final MenuKeyLatch actionKeys = new MenuKeyLatch();
+    private View confirmTarget;
+    private int confirmGeneration;
     private final MenuTrace timing = new MenuTrace();
     private View currentBody;
     private FrameLayout modalShield;
@@ -120,18 +118,55 @@ final class HeaderStackPopup extends PopupWindow {
                 finally { timing.endDraw(draw); }
             }
             @Override public boolean dispatchKeyEvent(KeyEvent event) {
-                boolean confirm = event.getKeyCode() == KeyEvent.KEYCODE_DPAD_CENTER
-                        || event.getKeyCode() == KeyEvent.KEYCODE_ENTER
-                        || event.getKeyCode() == KeyEvent.KEYCODE_NUMPAD_ENTER;
-                if (confirm && event.getAction() == KeyEvent.ACTION_DOWN) confirmingKey = true;
-                boolean handled = super.dispatchKeyEvent(event);
-                if (confirm && event.getAction() == KeyEvent.ACTION_UP) confirmingKey = false;
                 int key = event.getKeyCode();
-                if (key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_MENU || key == KeyEvent.KEYCODE_ESCAPE) {
-                    if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) navigateBack();
+                boolean confirm = key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER
+                        || key == KeyEvent.KEYCODE_NUMPAD_ENTER || key == KeyEvent.KEYCODE_DPAD_RIGHT;
+                boolean back = key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_MENU
+                        || key == KeyEvent.KEYCODE_ESCAPE || key == KeyEvent.KEYCODE_DPAD_LEFT;
+                if (confirm || back) {
+                    MenuKeyLatch.Result result = actionKeys.event(key, event.getDeviceId(), event.getDownTime(),
+                            event.getAction() == KeyEvent.ACTION_DOWN, event.getAction() == KeyEvent.ACTION_UP,
+                            event.getRepeatCount(), event.isCanceled());
+                    if (result == MenuKeyLatch.Result.PRESS) {
+                        clearConfirmTarget();
+                        if (confirm) {
+                            View focused = findFocus();
+                            if (isCurrentControl(focused)) confirmTarget = focused;
+                            confirmGeneration = pageGeneration;
+                        }
+                        // Remap before children: their old Left/Right listeners cannot swallow
+                        // these actions. SoundKeyLayout emits the normal soft cue once on DOWN.
+                        dispatchAction(event, confirm ? KeyEvent.KEYCODE_DPAD_CENTER : KeyEvent.KEYCODE_BACK);
+                    } else if (result == MenuKeyLatch.Result.RELEASE) {
+                        if (confirm) {
+                            View selected = confirmTarget;
+                            boolean activate = confirmGeneration == pageGeneration && selected == findFocus()
+                                    && isCurrentControl(selected);
+                            // Finish native DOWN feedback before clicking synchronously. A normal
+                            // View key-UP may post its click; teardown must not cancel that action
+                            // or let its later pointer cue run after confirmingKey has been cleared.
+                            clearConfirmTarget();
+                            if (activate) {
+                                confirmingKey = true;
+                                try { selected.performClick(); }
+                                finally { confirmingKey = false; }
+                            }
+                        } else navigateBack();
+                    } else if (result == MenuKeyLatch.Result.CANCEL) clearConfirmTarget();
                     return true;
                 }
-                return handled;
+                if (event.getAction() == KeyEvent.ACTION_DOWN && (key == KeyEvent.KEYCODE_DPAD_UP
+                        || key == KeyEvent.KEYCODE_DPAD_DOWN || key == KeyEvent.KEYCODE_TAB)) cancelMenuAction();
+                return super.dispatchKeyEvent(event);
+            }
+            private void dispatchAction(KeyEvent original, int mappedCode) {
+                KeyEvent mapped = original.getKeyCode() == mappedCode ? original : new KeyEvent(
+                        original.getDownTime(), original.getEventTime(), original.getAction(), mappedCode,
+                        0, original.getMetaState(), original.getDeviceId(), original.getScanCode(),
+                        original.getFlags(), original.getSource());
+                confirmingKey = mappedCode == KeyEvent.KEYCODE_DPAD_CENTER;
+                try { super.dispatchKeyEvent(mapped); }
+                finally { confirmingKey = false; }
             }
             @Override public View focusSearch(View focused, int direction) {
                 View next = FocusFinder.getInstance().findNextFocus(this, focused, direction);
@@ -156,23 +191,6 @@ final class HeaderStackPopup extends PopupWindow {
                 outline.setRoundRect(0, 0, Math.round(width()), Math.round(height()), dp(17 + 6 * shape));
             }
         });
-        heading = new LinearLayout(activity); heading.setOrientation(LinearLayout.VERTICAL);
-        heading.setGravity(Gravity.START); heading.setBaselineAligned(false);
-        int dividerHeight = Math.max(1, dp(.5f)), dividerGap = dp(5);
-        // Keep the separator inside the existing title-to-content space, preserving page height.
-        heading.setPadding(0, dp(4), 0, Math.max(0, dp(10) - dividerGap - dividerHeight));
-        title = text("", 16, 600, 0xFFFFFFFF);
-        title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END);
-        title.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams titleLayout = new LinearLayout.LayoutParams(-1, -2);
-        titleLayout.setMarginStart(textStartInset()); titleLayout.setMarginEnd(textEndInset());
-        heading.addView(title, titleLayout);
-        headingDivider = new View(activity); headingDivider.setBackgroundColor(0x4D808080);
-        headingDivider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        LinearLayout.LayoutParams dividerLayout = new LinearLayout.LayoutParams(-1, dividerHeight);
-        dividerLayout.setMarginStart(dp(12)); dividerLayout.setMarginEnd(dp(12));
-        dividerLayout.topMargin = dividerGap; heading.addView(headingDivider, dividerLayout);
-        panel.addView(heading, new LinearLayout.LayoutParams(-1, -2));
         body = new FrameLayout(activity); body.setClipChildren(false);
         panel.addView(body, new LinearLayout.LayoutParams(-1, 0));
         footer = text("Saved", 9, 500, 0x80FFFFFF); footer.setGravity(Gravity.CENTER_VERTICAL);
@@ -409,6 +427,23 @@ final class HeaderStackPopup extends PopupWindow {
     }
 
     private void pointerSound() { if (!confirmingKey) sounds.selection(); }
+    private boolean isCurrentControl(View view) {
+        if (view == null || !view.isClickable() || !view.isEnabled() || !view.isShown()) return false;
+        for (View node = view; node != null; ) {
+            if (node == currentBody) return true;
+            android.view.ViewParent parent = node.getParent();
+            node = parent instanceof View ? (View)parent : null;
+        }
+        return false;
+    }
+    private void clearConfirmTarget() {
+        if (confirmTarget != null) {
+            confirmTarget.cancelPendingInputEvents();
+            confirmTarget.setPressed(false);
+            confirmTarget = null;
+        }
+    }
+    private void cancelMenuAction() { actionKeys.clear(); clearConfirmTarget(); }
     private void rememberFocus() {
         if (pages.isEmpty() || currentBody == null) return;
         View focus = currentBody.findFocus();
@@ -416,6 +451,7 @@ final class HeaderStackPopup extends PopupWindow {
     }
     private void renderPage(boolean animate) {
         if (pages.isEmpty() || closing) return;
+        cancelMenuAction();
         final int generation = ++pageGeneration;
         cancelPageAnimator();
         for (int i = body.getChildCount() - 1; i >= 0; i--) {
@@ -424,13 +460,9 @@ final class HeaderStackPopup extends PopupWindow {
         }
         Page page = pages.get(pages.size() - 1);
         timing.point("page_request:" + page.title);
-        boolean rootPage = pages.size() == 1;
         // The surface itself is a focus fallback only for a page with no controls.
         windowRoot.setFocusableInTouchMode(false); windowRoot.setFocusable(false);
         windowRoot.setContentDescription(null);
-        heading.setVisibility(rootPage ? View.GONE : View.VISIBLE);
-        String headingText = rootPage ? "" : page.title;
-        if (!TextUtils.equals(title.getText(), headingText)) title.setText(headingText);
         updateFooter();
         ScrollView scroll = new ScrollView(activity); scroll.setVerticalScrollBarEnabled(false);
         scroll.setClipToPadding(false); scroll.setFillViewport(false); scroll.setFocusable(false);
@@ -443,21 +475,11 @@ final class HeaderStackPopup extends PopupWindow {
         int exactWidth = View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY);
         int naturalHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
         long measure = timing.begin("page_measure:" + page.title);
-        int headingHeight = 0;
         try {
-            if (!rootPage) {
-                if (headingWidth != contentWidth) { headingWidth = contentWidth; headingHeights.clear(); }
-                Integer savedHeight = headingHeights.get(page.title);
-                if (savedHeight == null) {
-                    heading.measure(exactWidth, naturalHeight);
-                    savedHeight = heading.getMeasuredHeight(); headingHeights.put(page.title, savedHeight);
-                }
-                headingHeight = savedHeight;
-            }
             contents.measure(exactWidth, naturalHeight);
         } finally { timing.end("page_measure:" + page.title, measure); }
         int chromeHeight = panel.getPaddingTop() + panel.getPaddingBottom()
-                + headingHeight + (dirty ? dp(20) : 0);
+                + (dirty ? dp(20) : 0);
         fullHeight = Math.min(maximumHeight, Math.max(dp(34), chromeHeight + contents.getMeasuredHeight()));
         LinearLayout.LayoutParams bodyLp = (LinearLayout.LayoutParams)body.getLayoutParams();
         int bodyHeight = Math.max(0, fullHeight - chromeHeight);
@@ -593,6 +615,7 @@ final class HeaderStackPopup extends PopupWindow {
     void close() { dismissThen(null); }
     void dismissThen(Runnable action) {
         if (closing || finished) return;
+        cancelMenuAction();
         closing = true; pendingAction = action;
         cancelPageAnimator(); animate(true);
     }
@@ -661,8 +684,7 @@ final class HeaderStackPopup extends PopupWindow {
     private void apply(float value) {
         shape = value; surface.invalidateSelf(); windowRoot.invalidateOutline();
         float alpha = smooth(value);
-        body.setAlpha(alpha); title.setAlpha(alpha); footer.setAlpha(alpha);
-        headingDivider.setAlpha(alpha);
+        body.setAlpha(alpha); footer.setAlpha(alpha);
         if (profileGhost != null) {
             float blend = smooth(value);
             float scale = 1 + (ghostScale - 1) * blend;
@@ -730,6 +752,7 @@ final class HeaderStackPopup extends PopupWindow {
     }
     private void cleanup() {
         if (finished) return; finished = true; showing = false; pageGeneration++;
+        cancelMenuAction();
         clearOpeningPreDraw();
         if (animator != null) { animator.removeAllListeners(); animator.cancel(); }
         cancelPageAnimator();

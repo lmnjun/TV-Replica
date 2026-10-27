@@ -9,8 +9,9 @@ TV-Replica publishes the launcher module derived from [CleanYourTV](https://gith
 ## Features
 
 - Six application cards per row, a bottom dock and direct on-screen arrangement.
-- A profile pill with a passive LAN / Wi-Fi / offline connection indicator.
-- A compact first-level menu with your name/email, **Add profile, Connection, Input, All Settings**. Connection shows the current Wi-Fi name when Android's permissions and location settings allow it.
+- A minimal profile pill with your photo and name, and compact menus without page headings or dividers.
+- A first-level menu with your name/email, **Add profile, Connection, Input, All Settings**. Open Connection to see the current Wi-Fi name when Android's permissions and location settings allow it.
+- In launcher menus: Enter / OK / Right confirms, Left / Back returns, and Up / Down moves between choices. Home app cards retain normal directional navigation.
 - HDMI connection states and device recognition where the TV firmware exposes metadata.
 - Saturn, Earth, Weather and Flip Clock scenes, with independent settings and a local screensaver.
 - Earth uses 4K day/night maps and a fixed rendering budget up to 1080p, with a bounded 2K fallback. Explore mode supports rotation, tilt and zoom.

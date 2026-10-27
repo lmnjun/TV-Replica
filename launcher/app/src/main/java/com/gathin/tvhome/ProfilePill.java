@@ -86,7 +86,7 @@ final class ProfilePill extends LinearLayout {
         setMinimumHeight(dp(30));
         setFocusable(true);
         setClickable(true);
-        if (!menu) { setPadding(dp(5), 0, dp(3), 0); setBackground(surface()); }
+        if (!menu) { setPadding(dp(5), 0, dp(12), 0); setBackground(surface()); }
         avatar = new CircularAvatarView(context);
         avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
         avatar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);

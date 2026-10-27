@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.provider.Settings;
-import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -58,21 +57,20 @@ final class LauncherSettingsStack {
         return rows;
     }
     private void choices(LinearLayout rows, String title, int current, int first, int count, IntConsumer save) {
-        TextView label = popup.text(title, 12, 600, 0xDEFFFFFF);
-        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(-1, -2); labelLp.bottomMargin = popup.dp(8);
-        rows.addView(label, labelLp);
-        LinearLayout numbers = new LinearLayout(activity);
+        popup.row(rows, R.drawable.ic_apps, title, Integer.toString(current),
+                () -> popup.push(title, () -> choiceValues(title, current, first, count, save)));
+    }
+    private View choiceValues(String title, int current, int first, int count, IntConsumer save) {
+        LinearLayout rows = popup.list();
         for (int i = 0; i < count; i++) {
             int value = first + i;
-            TextView number = popup.text(Integer.toString(value), 14, current == value ? 600 : 500, 0xF2FFFFFF);
-            number.setGravity(Gravity.CENTER); number.setTag(title + ":" + value); popup.control(number);
-            number.setSelected(current == value);
-            number.setOnClickListener(v -> { save.accept(value); changed(); });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, popup.dp(40), 1);
-            if (i < count - 1) lp.setMarginEnd(popup.dp(6)); numbers.addView(number, lp);
+            View option = popup.row(rows, current == value ? R.drawable.ic_check : R.drawable.ic_apps,
+                    Integer.toString(value), current == value ? "Selected" : null, () -> {
+                        save.accept(value); popup.markChanged(); popup.backPage();
+                    });
+            option.setTag(title + ":" + value); option.setSelected(current == value);
         }
-        LinearLayout.LayoutParams numberLp = new LinearLayout.LayoutParams(-1, -2);
-        numberLp.bottomMargin = popup.dp(18); rows.addView(numbers, numberLp);
+        return rows;
     }
     private View motion() {
         Config config = Config.load(activity);
