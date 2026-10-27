@@ -851,12 +851,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         current.setOnKeyListener((v, key, event) -> key == KeyEvent.KEYCODE_DPAD_LEFT
                 || key == KeyEvent.KEYCODE_DPAD_RIGHT || key == KeyEvent.KEYCODE_DPAD_UP);
         LinearLayout.LayoutParams identity = new LinearLayout.LayoutParams(-1, (int)(64 * density));
-        identity.bottomMargin = (int)(10 * density); rows.addView(current, identity);
+        identity.bottomMargin = (int)(4 * density); rows.addView(current, identity);
+        View identityDivider = new View(this);
+        identityDivider.setBackgroundColor(0x4D808080);
+        identityDivider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams divider = new LinearLayout.LayoutParams(-1, Math.max(1, Math.round(.5f * density)));
+        divider.setMarginStart(Math.round(12 * density)); divider.setMarginEnd(Math.round(12 * density));
+        divider.bottomMargin = Math.round(6 * density); rows.addView(identityDivider, divider);
         popup.row(rows, R.drawable.profile_add_account, "Add profile", null,
                 () -> popup.dismissThen(this::addGoogleProfile));
         ConnectionMonitor.Snapshot connection = connectionMonitor.cachedSnapshot();
         popup.row(rows, connection.transport == ConnectionMonitor.Transport.WIFI
-                        ? R.drawable.ic_wifi : R.drawable.ic_ethernet, "Connection", null,
+                        ? R.drawable.ic_wifi : R.drawable.ic_ethernet, "Connection", connection.ssid.isEmpty() ? connection.label : connection.ssid,
                 () -> popup.push("Connection", () -> headerConnection(popup)));
         popup.row(rows, R.drawable.ic_input, "Input", null,
                 () -> popup.push("Inputs", () -> headerInputs(popup)));
@@ -869,7 +875,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         LinearLayout rows = popup.list();
         LinearLayout summary = new LinearLayout(this);
         summary.setOrientation(LinearLayout.VERTICAL);
-        summary.setPadding((int)(12 * density), (int)(8 * density), (int)(12 * density), (int)(16 * density));
+        summary.setPaddingRelative(popup.textStartInset(), (int)(8 * density), popup.textEndInset(), (int)(16 * density));
         connectionName = popup.text("", 17, 600, 0xFFFFFFFF);
         connectionStatus = popup.text("", 11, 400, 0xBBFFFFFF);
         connectionAddress = popup.text("", 13, 500, 0xE6FFFFFF);
@@ -902,7 +908,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private void updateConnectionPage(ConnectionMonitor.Snapshot snapshot) {
         if (connectionName == null || headerControls == null
                 || !"Connection".equals(headerControls.pageTitle())) return;
-        setConnectionCopy(connectionName, snapshot.label);
+        setConnectionCopy(connectionName, snapshot.ssid.isEmpty() ? snapshot.label : snapshot.ssid);
         setConnectionCopy(connectionStatus, snapshot.status);
         setConnectionCopy(connectionAddress, snapshot.ipAddress.isEmpty() ? "—" : snapshot.ipAddress);
     }
@@ -927,12 +933,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         popup.row(rows, R.drawable.ic_input, "Inputs", null, this::showInputs);
         popup.row(rows, R.drawable.ic_wifi, "Wi-Fi", null,
                 () -> headerExternal(systemIntent(Settings.ACTION_WIFI_SETTINGS)));
-        popup.row(rows, ScenePreferences.icon(selectedScene), "Wallpaper scene", ScenePreferences.title(selectedScene), this::showSaturnMenu);
-        popup.row(rows, R.drawable.ic_picture, "Launcher settings", null,
+        popup.row(rows, ScenePreferences.icon(selectedScene), "Theme", ScenePreferences.title(selectedScene), this::showSaturnMenu);
+        popup.row(rows, R.drawable.ic_picture, "Launcher Setting", null,
                 () -> new LauncherSettingsStack(this, popup, this::headerExternal,
                         () -> showSaturnSettings(popup)).show());
         if (moduleCards) popup.row(rows, R.drawable.ic_apps, "Module cards", null, this::showModuleCards);
-        popup.row(rows, R.drawable.ic_apps, "Arrange apps", "Move cards on Home",
+        popup.row(rows, R.drawable.ic_apps, "Arrange App Cards", "Move cards on Home",
                 () -> headerLocalAction("arrange", lastFocusedKey, () -> showLayoutEditor(lastFocusedKey)));
         return rows;
     }
@@ -1121,6 +1127,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
             headerSettingsReloadPending = false; recreate(); return;
         }
         if (headerPill != null) headerPill.refresh();
+        connectionMonitor.refresh();
         applyClockFormat();
         applySelectedScene();
         // A festival that started or ended while Home was in the background: rebuild with or without it.
@@ -1546,7 +1553,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private void updateArrangeBar(){
         if(arrangeBar==null)return;
         boolean moving=carriedKey()!=null;int position=adapter.positionOf(carriedKey());
-        arrangeTitle.setText(moving?"Moving · "+adapter.labelAt(position):"Arrange apps");
+        arrangeTitle.setText(moving?"Moving · "+adapter.labelAt(position):"Arrange App Cards");
         arrangeHint.setText(moving?"Arrow keys move  ·  OK places  ·  Back saves and finishes":"Select an app  ·  OK to move  ·  Back saves and finishes");
     }
     private void cancelReorder() { finishReorder(false); }
@@ -3138,7 +3145,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
 
     private void showSaturnMenu() {
         HeaderStackPopup popup = ensureHeaderControls();
-        if (popup != null) popup.push("Wallpaper scenes", () -> headerScenes(popup));
+        if (popup != null) popup.push("Theme", () -> headerScenes(popup));
     }
 
     private void addSettingsMenuRow(LinearLayout rows, PopupWindow popup, int title, Runnable action) {

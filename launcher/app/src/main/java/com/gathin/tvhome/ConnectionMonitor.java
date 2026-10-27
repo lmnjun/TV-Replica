@@ -7,6 +7,10 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.wifi.SupplicantState;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -25,26 +29,30 @@ final class ConnectionMonitor {
     static final class Snapshot {
         final Transport transport;
         final boolean connected, validated, known, vpn;
+        /** Empty when not using Wi-Fi, redacted by Android, or not yet available. Never persisted or logged. */
+        final String ssid;
         final String label, status, ipAddress;
 
         private Snapshot(Transport transport, boolean connected, boolean validated, boolean known,
-                         boolean vpn, String label, String status, String ipAddress) {
+                         boolean vpn, String label, String status, String ipAddress, String ssid) {
             this.transport = transport; this.connected = connected; this.validated = validated;
             this.known = known; this.vpn = vpn; this.label = label; this.status = status; this.ipAddress = ipAddress;
+            this.ssid = ssid;
         }
         private static Snapshot checking() {
-            return new Snapshot(Transport.OTHER, false, false, false, false, "Checking", "Checking connection", "");
+            return new Snapshot(Transport.OTHER, false, false, false, false, "Checking", "Checking connection", "", "");
         }
         private static Snapshot unavailable() {
-            return new Snapshot(Transport.OTHER, false, false, false, false, "Unavailable", "Connection status unavailable", "");
+            return new Snapshot(Transport.OTHER, false, false, false, false, "Unavailable", "Connection status unavailable", "", "");
         }
         private static Snapshot offline() {
-            return new Snapshot(Transport.OFFLINE, false, false, true, false, "Offline", "No network connection", "");
+            return new Snapshot(Transport.OFFLINE, false, false, true, false, "Offline", "No network connection", "", "");
         }
         private boolean sameState(Snapshot other) {
             return other != null && transport == other.transport && connected == other.connected
                     && validated == other.validated && known == other.known && vpn == other.vpn
-                    && label.equals(other.label) && status.equals(other.status) && ipAddress.equals(other.ipAddress);
+                    && label.equals(other.label) && status.equals(other.status) && ipAddress.equals(other.ipAddress)
+                    && ssid.equals(other.ssid);
         }
     }
 
@@ -63,14 +71,24 @@ final class ConnectionMonitor {
     private Handler worker;
     // The following fields and callback payloads belong exclusively to the worker looper.
     private ConnectivityManager manager;
+    private WifiManager wifiManager;
     private ConnectivityManager.NetworkCallback defaults, networks;
     private boolean defaultRegistered, networksRegistered, started;
     private Network defaultNetwork;
     private final Map<Network, State> states = new HashMap<>();
+    private Network legacyNameNetwork;
+    private String legacyWifiName = "";
+    private boolean wifiRefreshQueued;
+    private final Runnable wifiRefresh = () -> {
+        wifiRefreshQueued = false;
+        if (requested && started) refreshWifiNameOnWorker(epoch);
+    };
 
     private static final class State {
+        final Network network;
         NetworkCapabilities capabilities;
         LinkProperties links;
+        State(Network network) { this.network = network; }
     }
 
     private ConnectionMonitor(Context context) { this.context = context; }
@@ -88,6 +106,16 @@ final class ConnectionMonitor {
         if (listeners.isEmpty() && requested) { requested = false; worker().post(this::stopOnWorker); }
     }
 
+    /** Recheck after returning from network/permission settings. Calling it performs no system IPC. */
+    void refresh() {
+        if (!requested) return;
+        worker().post(() -> {
+            if (!requested) return;
+            if (!started) startOnWorker();
+            else queueWifiNameRefresh();
+        });
+    }
+
     private Handler worker() {
         if (worker == null) {
             HandlerThread thread = new HandlerThread("ConnectionStatus", Process.THREAD_PRIORITY_BACKGROUND);
@@ -99,7 +127,7 @@ final class ConnectionMonitor {
     private boolean live(long generation) { return requested && started && generation == epoch; }
     private State state(Network network) {
         State state = states.get(network);
-        if (state == null) { state = new State(); states.put(network, state); }
+        if (state == null) { state = new State(network); states.put(network, state); }
         return state;
     }
 
@@ -110,14 +138,16 @@ final class ConnectionMonitor {
             manager = context.getSystemService(ConnectivityManager.class);
             if (manager == null) { publish(Snapshot.unavailable(), generation); return; }
             started = true;
-            defaults = new ConnectivityManager.NetworkCallback() {
+            defaults = withWifiLocation(new ConnectivityManager.NetworkCallback() {
                 @Override public void onAvailable(Network network) {
                     if (!live(generation)) return;
+                    if (!network.equals(defaultNetwork)) clearLegacyWifiName();
                     defaultNetwork = network;
                     // API 26+ delivers capabilities/link properties next; no racy synchronous query here.
                 }
                 @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
                     if (!live(generation)) return;
+                    if (network.equals(legacyNameNetwork) && !nameFromCapabilities(caps).isEmpty()) clearLegacyWifiName();
                     defaultNetwork = network; state(network).capabilities = new NetworkCapabilities(caps);
                     publishCurrent(generation);
                 }
@@ -127,12 +157,14 @@ final class ConnectionMonitor {
                 }
                 @Override public void onLost(Network network) {
                     if (!live(generation) || !network.equals(defaultNetwork)) return;
+                    clearLegacyWifiName();
                     defaultNetwork = null; publishCurrent(generation);
                 }
-            };
-            networks = new ConnectivityManager.NetworkCallback() {
+            });
+            networks = withWifiLocation(new ConnectivityManager.NetworkCallback() {
                 @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
                     if (!live(generation)) return;
+                    if (network.equals(legacyNameNetwork) && !nameFromCapabilities(caps).isEmpty()) clearLegacyWifiName();
                     state(network).capabilities = new NetworkCapabilities(caps); publishCurrent(generation);
                 }
                 @Override public void onLinkPropertiesChanged(Network network, LinkProperties links) {
@@ -141,9 +173,10 @@ final class ConnectionMonitor {
                 }
                 @Override public void onLost(Network network) {
                     if (!live(generation)) return;
+                    if (network.equals(legacyNameNetwork)) clearLegacyWifiName();
                     states.remove(network); publishCurrent(generation);
                 }
-            };
+            });
             manager.registerDefaultNetworkCallback(defaults, worker); defaultRegistered = true;
             // Passive observation includes VPNs; this never requests or binds to a network.
             manager.registerNetworkCallback(new NetworkRequest.Builder()
@@ -171,12 +204,35 @@ final class ConnectionMonitor {
     }
     private void tearDown() {
         started = false;
+        worker.removeCallbacks(wifiRefresh); wifiRefreshQueued = false;
+        clearLegacyWifiName(); wifiManager = null;
         if (manager != null) {
             if (defaultRegistered) try { manager.unregisterNetworkCallback(defaults); } catch (RuntimeException ignored) { }
             if (networksRegistered) try { manager.unregisterNetworkCallback(networks); } catch (RuntimeException ignored) { }
         }
         defaultRegistered = networksRegistered = false;
         defaults = networks = null; manager = null; defaultNetwork = null; states.clear();
+    }
+
+    private static ConnectivityManager.NetworkCallback withWifiLocation(ConnectivityManager.NetworkCallback delegate) {
+        return Build.VERSION.SDK_INT >= 31 ? Api31Callbacks.withLocation(delegate) : delegate;
+    }
+
+    /** Android 12+ otherwise redacts WifiInfo's SSID even when location permission is granted. */
+    @android.annotation.TargetApi(31)
+    private static final class Api31Callbacks {
+        static ConnectivityManager.NetworkCallback withLocation(ConnectivityManager.NetworkCallback delegate) {
+            return new ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) {
+                @Override public void onAvailable(Network network) { delegate.onAvailable(network); }
+                @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities caps) {
+                    delegate.onCapabilitiesChanged(network, caps);
+                }
+                @Override public void onLinkPropertiesChanged(Network network, LinkProperties links) {
+                    delegate.onLinkPropertiesChanged(network, links);
+                }
+                @Override public void onLost(Network network) { delegate.onLost(network); }
+            };
+        }
     }
 
     private static Transport transport(NetworkCapabilities caps) {
@@ -198,7 +254,9 @@ final class ConnectionMonitor {
         }
         return best;
     }
-    private void publishCurrent(long generation) {
+    private void publishCurrent(long generation) { publishCurrent(generation, true); }
+
+    private void publishCurrent(long generation, boolean refreshWifiName) {
         if (!live(generation)) return;
         if (defaultNetwork == null) { publish(Snapshot.offline(), generation); return; }
         State current = states.get(defaultNetwork);
@@ -221,7 +279,55 @@ final class ConnectionMonitor {
         String label = kind == Transport.ETHERNET ? "LAN" : kind == Transport.WIFI ? "Wi-Fi" : "Network";
         String status = captive ? "Sign-in required" : validated ? "Connected · Internet available" : "Connected · Internet not verified";
         if (vpn) status += " · VPN";
-        publish(new Snapshot(kind, true, validated, true, vpn, label, status, address(addressSource.links)), generation);
+        String ssid = "";
+        if (kind == Transport.WIFI) {
+            ssid = addressSource.network.equals(legacyNameNetwork)
+                    ? legacyWifiName : nameFromCapabilities(addressSource.capabilities);
+            // Older Android/TCL callbacks omit WifiInfo. Coalesce a single background query
+            // after callback delivery; never query WifiManager from UI or on a rendering tick.
+            if (refreshWifiName && nameFromCapabilities(addressSource.capabilities).isEmpty()) queueWifiNameRefresh();
+        } else clearLegacyWifiName();
+        publish(new Snapshot(kind, true, validated, true, vpn, label, status, address(addressSource.links), ssid), generation);
+    }
+
+    private static String nameFromCapabilities(NetworkCapabilities capabilities) {
+        if (Build.VERSION.SDK_INT >= 29 && capabilities != null) {
+            Object info = capabilities.getTransportInfo();
+            if (info instanceof WifiInfo) return WifiNetworkName.clean(((WifiInfo)info).getSSID());
+        }
+        return "";
+    }
+
+    private void queueWifiNameRefresh() {
+        if (!requested || !started || wifiRefreshQueued) return;
+        wifiRefreshQueued = true; worker.post(wifiRefresh);
+    }
+
+    private void clearLegacyWifiName() { legacyNameNetwork = null; legacyWifiName = ""; }
+
+    @SuppressWarnings("deprecation") // Required fallback on Android 11/TCL; API 31+ callbacks are preferred.
+    private void refreshWifiNameOnWorker(long generation) {
+        if (!live(generation)) return;
+        State source = defaultNetwork == null ? null : states.get(defaultNetwork);
+        if (source != null && source.capabilities != null
+                && source.capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+            State underlying = physical(transport(source.capabilities));
+            if (underlying != null) source = underlying;
+        }
+        clearLegacyWifiName();
+        if (source != null && source.capabilities != null && transport(source.capabilities) == Transport.WIFI) {
+            legacyNameNetwork = source.network;
+            try {
+                if (wifiManager == null) wifiManager = context.getSystemService(WifiManager.class);
+                WifiInfo info = wifiManager == null ? null : wifiManager.getConnectionInfo();
+                if (info != null && info.getSupplicantState() == SupplicantState.COMPLETED)
+                    legacyWifiName = WifiNetworkName.clean(info.getSSID());
+            } catch (RuntimeException unavailable) {
+                // Missing permission, a disabled location toggle or vendor redaction means no name.
+                // Preserve connection/IP state, and never persist or log location-sensitive metadata.
+            }
+        }
+        publishCurrent(generation, false);
     }
     private static String address(LinkProperties links) {
         if (links == null) return "";

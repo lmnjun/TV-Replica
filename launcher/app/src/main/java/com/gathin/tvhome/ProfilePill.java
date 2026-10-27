@@ -53,7 +53,7 @@ final class ProfilePill extends LinearLayout {
     private PhotoKey avatarKey;
     private boolean avatarResolved;
     private int photoGeneration;
-    private String avatarAccount = "", currentDisplayName = "Account";
+    private String avatarAccount = "", currentDisplayName = "Account", currentAccount = "";
     private long avatarMetadataRevision = Long.MIN_VALUE;
     private boolean sharedSurface, heroAppearance, menuAppearance, showConnection;
     private TextView heroDetail;
@@ -86,7 +86,7 @@ final class ProfilePill extends LinearLayout {
         setMinimumHeight(dp(30));
         setFocusable(true);
         setClickable(true);
-        if (!menu) { setPadding(dp(5), 0, dp(10), 0); setBackground(surface()); }
+        if (!menu) { setPadding(dp(5), 0, dp(3), 0); setBackground(surface()); }
         avatar = new CircularAvatarView(context);
         avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
         avatar.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -109,8 +109,8 @@ final class ProfilePill extends LinearLayout {
             LinearLayout.LayoutParams label = new LinearLayout.LayoutParams(-2, -2);
             label.setMarginStart(dp(8)); addView(name, label);
             connectionBadge = new ConnectionBadge(context);
-            LinearLayout.LayoutParams badge = new LinearLayout.LayoutParams(dp(20), dp(20));
-            badge.setMarginStart(dp(8)); addView(connectionBadge, badge);
+            LinearLayout.LayoutParams badge = new LinearLayout.LayoutParams(dp(28), dp(28));
+            badge.setMarginStart(dp(12)); addView(connectionBadge, badge);
             connectionBadge.setVisibility(GONE);
         }
         setOnClickListener(v -> { if (clickAction != null) clickAction.run(); });
@@ -150,8 +150,10 @@ final class ProfilePill extends LinearLayout {
     }
 
     private void updateDescription() {
-        String description = menuAppearance ? "Profile, " + currentDisplayName : "Google profile: " + currentDisplayName;
-        if (showConnection) description += ". Connection: " + connection.label + ". " + connection.status;
+        String description = menuAppearance ? "Current profile, " + currentDisplayName
+                + (currentAccount.isEmpty() ? "" : ", " + currentAccount) : "Google profile: " + currentDisplayName;
+        if (showConnection) description += ". Connection: " + connection.label
+                + (connection.ssid.isEmpty() ? "" : ", " + connection.ssid) + ". " + connection.status;
         if (!TextUtils.equals(getContentDescription(), description)) setContentDescription(description);
     }
 
@@ -182,8 +184,8 @@ final class ProfilePill extends LinearLayout {
         name.setTextSize(16); name.setMaxWidth(dp(180)); InterTypography.apply(name, 600);
         // Reset the compact pill's 8dp start margin rather than carrying it into this column.
         identity.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        heroDetail = new TextView(getContext()); heroDetail.setText("Current profile");
-        heroDetail.setTextSize(10); heroDetail.setTextColor(0xAFFFFFFF); heroDetail.setIncludeFontPadding(false);
+        heroDetail = new TextView(getContext());
+        heroDetail.setTextSize(11); heroDetail.setTextColor(0xB8FFFFFF); heroDetail.setIncludeFontPadding(false);
         heroDetail.setSingleLine(true); heroDetail.setEllipsize(TextUtils.TruncateAt.END);
         InterTypography.apply(heroDetail, 400);
         LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-1, -2); detailLp.topMargin = dp(4);
@@ -200,9 +202,9 @@ final class ProfilePill extends LinearLayout {
     void refresh() {
         DeviceProfileStore.Profile profile = DeviceProfileStore.read(getContext());
         currentDisplayName = profile.displayName();
-        String title = menuAppearance ? "Profile" : currentDisplayName;
-        if (!TextUtils.equals(name.getText(), title)) name.setText(title);
-        String detail = menuAppearance ? currentDisplayName : "Current profile";
+        currentAccount = profile.account;
+        if (!TextUtils.equals(name.getText(), currentDisplayName)) name.setText(currentDisplayName);
+        String detail = menuAppearance ? profile.available() ? currentAccount : "Add a Google account" : "Current profile";
         if (heroDetail != null && !TextUtils.equals(heroDetail.getText(), detail)) heroDetail.setText(detail);
         updateDescription();
         setVisibility(VISIBLE);

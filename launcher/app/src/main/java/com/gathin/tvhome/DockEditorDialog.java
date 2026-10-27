@@ -90,7 +90,7 @@ final class DockEditorDialog extends Dialog {
         glass.setCornerRadius(dp(23)); glass.setStroke(Math.max(1, dp(.6f)), 0x48FFFFFF); panel.setBackground(glass);
         LinearLayout header = new LinearLayout(activity); header.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout copy = new LinearLayout(activity); copy.setOrientation(LinearLayout.VERTICAL);
-        copy.addView(text("Arrange apps", 23, 0xFFFFFFFF, 700), new LinearLayout.LayoutParams(-1, dp(29)));
+        copy.addView(text("Arrange App Cards", 23, 0xFFFFFFFF, 700), new LinearLayout.LayoutParams(-1, dp(29)));
         status = text("", 11, 0xB9FFFFFF, 400); copy.addView(status, new LinearLayout.LayoutParams(-1, dp(19)));
         header.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         cancel = action("Cancel", false); cancel.setContentDescription("Cancel layout changes"); cancel.setOnClickListener(v -> dismiss());

@@ -10,7 +10,7 @@ TV-Replica publishes the launcher module derived from [CleanYourTV](https://gith
 
 - Six application cards per row, a bottom dock and direct on-screen arrangement.
 - A profile pill with a passive LAN / Wi-Fi / offline connection indicator.
-- A compact first-level menu: **Profile, Add profile, Connection, Input, All Settings**.
+- A compact first-level menu with your name/email, **Add profile, Connection, Input, All Settings**. Connection shows the current Wi-Fi name when Android's permissions and location settings allow it.
 - HDMI connection states and device recognition where the TV firmware exposes metadata.
 - Saturn, Earth, Weather and Flip Clock scenes, with independent settings and a local screensaver.
 - Earth uses 4K day/night maps and a fixed rendering budget up to 1080p, with a bounded 2K fallback. Explore mode supports rotation, tilt and zoom.
@@ -43,7 +43,7 @@ adb shell am start -n com.gathin.tvhome/.MainActivity
 
 Select the launcher through the TV's Home settings. Some firmware also requires an accessibility-based Home handoff. Keep a working route to the TV's system settings and original launcher before changing Home ownership. Casting, voice assistants, HDMI and firmware updates are managed by the TV firmware.
 
-From **All Settings → Wallpaper scene**, choose a scene and open its settings. In Earth **Explore scene**, use arrows to rotate and tilt, channel or fast-forward/rewind keys to zoom, OK to toggle 1× / 1.5×, and Back to save and exit.
+From **All Settings → Theme**, choose a scene and open its settings. In Earth **Explore scene**, use arrows to rotate and tilt, channel or fast-forward/rewind keys to zoom, OK to toggle 1× / 1.5×, and Back to save and exit.
 
 ## Compatibility and performance
 

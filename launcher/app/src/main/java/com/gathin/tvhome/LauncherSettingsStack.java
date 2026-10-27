@@ -29,7 +29,7 @@ final class LauncherSettingsStack {
         choices = activity.getSharedPreferences(Config.SETTINGS_NAME, Activity.MODE_PRIVATE);
         sceneSettings = new SceneSettingsPages(activity, popup, saturnSettings);
     }
-    void show() { popup.push("Launcher settings", this::root); }
+    void show() { popup.push("Launcher Setting", this::root); }
     private View root() {
         LinearLayout rows = popup.list();
         popup.row(rows, R.drawable.ic_picture, "Appearance", "Layout and wallpaper", () -> popup.push("Appearance", this::appearance));
@@ -127,7 +127,7 @@ final class LauncherSettingsStack {
         LinearLayout rows = popup.list();
         String scene = ScenePreferences.current(activity);
         popup.row(rows, ScenePreferences.icon(scene), "Scenes", ScenePreferences.title(scene),
-                () -> popup.push("Wallpaper scenes", () -> sceneChoices(false)));
+                () -> popup.push("Theme", () -> sceneChoices(false)));
         sceneSettings.addEntry(rows, scene);
         String current = choices.getString(Config.WALLPAPER_CHOICE_KEY, null);
         popup.row(rows, R.drawable.ic_picture, "Theme default", current == null ? "Selected" : "Use the theme's wallpaper",
@@ -188,7 +188,7 @@ final class LauncherSettingsStack {
                 : new String[]{ScenePreferences.SATURN, ScenePreferences.EARTH, ScenePreferences.WEATHER, ScenePreferences.FLIP, ScenePreferences.THEME};
         for (String id : ids) {
             View row = popup.row(rows, ScenePreferences.icon(id), ScenePreferences.title(id),
-                    id.equals(current) ? "Selected" : saver ? "Screen saver" : "Wallpaper scene", () -> {
+                    id.equals(current) ? "Selected" : saver ? "Screen saver" : "Theme", () -> {
                         choices.edit().putString(saver ? ScenePreferences.SAVER_KEY : ScenePreferences.SCENE_KEY, id).apply();
                         popup.refreshPage();
                     });

@@ -67,6 +67,7 @@ final class HeaderStackPopup extends PopupWindow {
     private final LinearLayout panel, heading;
     private final FrameLayout body;
     private final TextView title, footer;
+    private final View headingDivider;
     private final Surface surface;
     private final List<Page> pages = new ArrayList<>();
     private final List<FocusState> underlayFocus = new ArrayList<>();
@@ -155,15 +156,27 @@ final class HeaderStackPopup extends PopupWindow {
                 outline.setRoundRect(0, 0, Math.round(width()), Math.round(height()), dp(17 + 6 * shape));
             }
         });
-        heading = new LinearLayout(activity); heading.setGravity(Gravity.CENTER_VERTICAL);
-        heading.setPadding(0, dp(4), 0, dp(10));
+        heading = new LinearLayout(activity); heading.setOrientation(LinearLayout.VERTICAL);
+        heading.setGravity(Gravity.START); heading.setBaselineAligned(false);
+        int dividerHeight = Math.max(1, dp(.5f)), dividerGap = dp(5);
+        // Keep the separator inside the existing title-to-content space, preserving page height.
+        heading.setPadding(0, dp(4), 0, Math.max(0, dp(10) - dividerGap - dividerHeight));
         title = text("", 16, 600, 0xFFFFFFFF);
         title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END);
-        heading.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        title.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams titleLayout = new LinearLayout.LayoutParams(-1, -2);
+        titleLayout.setMarginStart(textStartInset()); titleLayout.setMarginEnd(textEndInset());
+        heading.addView(title, titleLayout);
+        headingDivider = new View(activity); headingDivider.setBackgroundColor(0x4D808080);
+        headingDivider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams dividerLayout = new LinearLayout.LayoutParams(-1, dividerHeight);
+        dividerLayout.setMarginStart(dp(12)); dividerLayout.setMarginEnd(dp(12));
+        dividerLayout.topMargin = dividerGap; heading.addView(headingDivider, dividerLayout);
         panel.addView(heading, new LinearLayout.LayoutParams(-1, -2));
         body = new FrameLayout(activity); body.setClipChildren(false);
         panel.addView(body, new LinearLayout.LayoutParams(-1, 0));
         footer = text("Saved", 9, 500, 0x80FFFFFF); footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setPaddingRelative(textStartInset(), 0, textEndInset(), 0);
         footer.setVisibility(View.GONE);
         panel.addView(footer, new LinearLayout.LayoutParams(-1, dp(20)));
         // Keep PopupWindow's public type for existing callers without creating a second HWUI window.
@@ -649,6 +662,7 @@ final class HeaderStackPopup extends PopupWindow {
         shape = value; surface.invalidateSelf(); windowRoot.invalidateOutline();
         float alpha = smooth(value);
         body.setAlpha(alpha); title.setAlpha(alpha); footer.setAlpha(alpha);
+        headingDivider.setAlpha(alpha);
         if (profileGhost != null) {
             float blend = smooth(value);
             float scale = 1 + (ghostScale - 1) * blend;
@@ -739,6 +753,10 @@ final class HeaderStackPopup extends PopupWindow {
     }
     private void publishTransition() { if (transition != null) transition.accept(shapeMotion || pageMotion); }
     int dp(float value) { return Math.round(value * density); }
+    /** Match row text after its start padding, icon and icon-to-label gap, including pixel rounding. */
+    int textStartInset() { return dp(12) + dp(21) + dp(12); }
+    /** Match row text before its trailing arrow and spacing. */
+    int textEndInset() { return dp(12) + dp(15) + dp(8); }
 
     private final class Surface extends Drawable {
         final SettingsSurface material = new SettingsSurface(density);

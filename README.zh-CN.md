@@ -10,7 +10,7 @@
 
 - 每行六个应用卡片、底部 Dock、直接在主页排列应用。
 - Profile pill 内显示 LAN / Wi-Fi / 离线状态圆标。
-- 第一层菜单为 Profile、Add profile、Connection、Input、All Settings。
+- 第一层菜单显示姓名与邮箱，以及 Add profile、Connection、Input、All Settings。Android 权限与位置设置允许时，Connection 显示当前 Wi-Fi 名称。
 - HDMI 连接状态与设备识别；可识别内容取决于电视固件。
 - Saturn、Earth、Weather、Flip Clock 场景，各有独立设置，并提供本地屏保。
 - 地球使用 4K 昼夜贴图，渲染上限固定为 1080p，支持安全的 2K 回退和旋转、倾斜、缩放。
@@ -43,7 +43,7 @@ adb shell am start -n com.gathin.tvhome/.MainActivity
 
 在系统的 Home 设置中选择启动器；部分固件还需辅助功能接管 Home。修改默认主页前，请保留进入系统设置与原桌面的恢复路径。投屏、语音、HDMI 与系统更新由电视固件管理。
 
-在 All Settings → Wallpaper scene 选择壁纸并进入对应设置。Earth 的 Explore scene 使用方向键旋转和倾斜，频道键或快进／快退缩放，OK 切换 1× / 1.5×，Back 保存退出。
+在 All Settings → Theme 选择壁纸并进入对应设置。Earth 的 Explore scene 使用方向键旋转和倾斜，频道键或快进／快退缩放，OK 切换 1× / 1.5×，Back 保存退出。
 
 ## 兼容性与性能
 
