@@ -650,12 +650,13 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         super.onBindViewHolder(holder,position,payloads);
     }
     /** Main-thread hook for resume and TvInputCallback state/info changes; never rebuilds the app order. */
-    void refreshInputStates(){
+    boolean refreshInputStates(){
         Map<Integer,HdmiInputs.Port> previous=new HashMap<>(inputStates);readInputStates();
         for(int i=0;i<items.size();i++)if(items.get(i).kind==Entry.INPUT){
             int port=portOf(items.get(i));
             if(!java.util.Objects.equals(previous.get(port),inputStates.get(port)))notifyItemChanged(i,INPUT_STATUS_PAYLOAD);
         }
+        return !previous.equals(inputStates);
     }
     private void readInputStates(){inputStates.clear();for(HdmiInputs.Port port:HdmiInputs.read(ctx))inputStates.put(port.number,port);}
     private static int portOf(Entry entry){return entry.pkg.charAt(entry.pkg.length()-1)-'0';}

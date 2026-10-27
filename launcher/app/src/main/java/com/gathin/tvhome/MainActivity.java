@@ -271,19 +271,37 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         updateWifiLabel();
         updateConnectionPage(snapshot);
     };
-    /** Shows the Inputs pill once the TV registers an input: at boot HDMI inputs can appear after Home is shown. */
-    private void refreshInputTiles() {
+    private boolean inputRefreshPending, inputStructurePending;
+    private final Runnable flushInputRefresh = () -> {
+        if (!inputRefreshPending || overlayMotion || !started || isFinishing()) return;
+        refreshInputTiles(inputStructurePending);
+    };
+
+    /** Keep TV-service callbacks outside the short menu animation critical path. */
+    private void refreshInputTiles(boolean structureChanged) {
+        if (!started || isFinishing()) return;
+        if (overlayMotion) {
+            inputRefreshPending = true; inputStructurePending |= structureChanged;
+            return;
+        }
+        structureChanged |= inputStructurePending;
+        inputRefreshPending = inputStructurePending = false;
+        handler.removeCallbacks(flushInputRefresh);
+        long begin = System.nanoTime();
         updateInputsButton();
-        if (adapter != null) adapter.refreshInputStates();
-        if (headerControls != null && headerControls.isShowing() && "Inputs".equals(headerControls.pageTitle()))
+        boolean changed = adapter != null && adapter.refreshInputStates();
+        if ((structureChanged || changed) && headerControls != null && headerControls.isShowing()
+                && "Inputs".equals(headerControls.pageTitle()))
             headerControls.refreshPage();
+        android.util.Log.i("Menu.Perf", "phase=input_status_refresh changed=" + changed
+                + " structure=" + structureChanged + " duration_ms=" + (System.nanoTime() - begin) / 1_000_000.0);
     }
     private final TvInputManager.TvInputCallback inputCallback = new TvInputManager.TvInputCallback() {
-        @Override public void onInputAdded(String id) { refreshInputTiles(); }
-        @Override public void onInputRemoved(String id) { refreshInputTiles(); }
-        @Override public void onInputStateChanged(String id, int state) { refreshInputTiles(); }
-        @Override public void onInputUpdated(String id) { refreshInputTiles(); }
-        @Override public void onTvInputInfoUpdated(TvInputInfo info) { refreshInputTiles(); }
+        @Override public void onInputAdded(String id) { refreshInputTiles(true); }
+        @Override public void onInputRemoved(String id) { refreshInputTiles(true); }
+        @Override public void onInputStateChanged(String id, int state) { refreshInputTiles(false); }
+        @Override public void onInputUpdated(String id) { refreshInputTiles(true); }
+        @Override public void onTvInputInfoUpdated(TvInputInfo info) { refreshInputTiles(true); }
     };
     private final IntentFilter packageFilter = new IntentFilter();
     private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
@@ -1314,6 +1332,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     protected void onStop() {
         super.onStop();
         started = false;
+        handler.removeCallbacks(flushInputRefresh);
+        inputRefreshPending = inputStructurePending = false;
         unregisterReceiver(packageReceiver);
         unregisterReceiver(timeReceiver);
         handler.removeCallbacks(clockCheck);
@@ -2524,6 +2544,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private void setOverlayMotionActive(boolean active) {
         overlayMotion = active;
         updateSceneMotion();
+        if (!active && inputRefreshPending) {
+            handler.removeCallbacks(flushInputRefresh);
+            handler.post(flushInputRefresh);
+        }
     }
 
     private void holdSceneForNavigation() {
