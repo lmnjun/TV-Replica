@@ -114,7 +114,6 @@ final class ProfilePill extends LinearLayout {
             connectionBadge.setVisibility(GONE);
         }
         setOnClickListener(v -> { if (clickAction != null) clickAction.run(); });
-        fallbackAvatar();
         refresh();
     }
 

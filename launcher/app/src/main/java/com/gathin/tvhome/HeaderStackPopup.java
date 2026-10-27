@@ -42,7 +42,7 @@ final class HeaderStackPopup extends PopupWindow {
     private static final MenuWarmupGate WARMUP = new MenuWarmupGate();
     private static final android.content.res.ColorStateList ICON_TINT = android.content.res.ColorStateList.valueOf(0xD9FFFFFF);
     private static final android.content.res.ColorStateList ARROW_TINT = android.content.res.ColorStateList.valueOf(0xAFFFFFFF);
-    private static final android.view.animation.Interpolator MOTION_CURVE = new android.view.animation.PathInterpolator(.22f, .8f, .24f, 1);
+    private static final android.view.animation.Interpolator MOTION_CURVE = new android.view.animation.PathInterpolator(.2f, 0, .2f, 1);
     private static final class Page {
         final String title; final Supplier<View> build; Object focusTag;
         Page(String title, Supplier<View> build) { this.title = title; this.build = build; }
@@ -87,6 +87,10 @@ final class HeaderStackPopup extends PopupWindow {
     private Runnable pendingAction;
     private int fullWidth, fullHeight, maximumHeight, windowHeight, startWidth, pageGeneration;
     private float shape, expandedHeight, ghostScale = 1, ghostX, ghostY;
+    private float appliedWidth = Float.NaN, appliedHeight = Float.NaN, appliedRadius = Float.NaN;
+    private float appliedMaterial = Float.NaN, appliedAlpha = Float.NaN, publishedMotion = Float.NaN;
+    private int outlineWidth = Integer.MIN_VALUE, outlineHeight = Integer.MIN_VALUE;
+    private float outlineRadius = Float.NaN;
     private final Rect sourceAvatar = new Rect(), targetAvatar = new Rect();
     private boolean showing, closing, finished, confirmingKey, dirty, interrupted, shapeMotion, pageMotion;
 
@@ -245,7 +249,7 @@ final class HeaderStackPopup extends PopupWindow {
                 prepared.profileGhost.setBounds(0, 0, source.getWidth(), source.getHeight());
                 prepared.panel.getOverlay().add(prepared.profileGhost);
             }
-            prepared.surface.material.setEmphasized(source.hasFocus() || source.isActivated());
+            prepared.surface.setEmphasized(source.hasFocus() || source.isActivated());
 
             // The alpha-zero ancestor prevents any visible pixels. buildLayer() is called on
             // its alpha-one child directly, using that child's attached ThreadedRenderer.
@@ -353,7 +357,7 @@ final class HeaderStackPopup extends PopupWindow {
         }
     }
     void setTransitionListener(Consumer<Boolean> listener) { transition = listener; }
-    void setMotionListener(DoubleConsumer listener) { motion = listener; }
+    void setMotionListener(DoubleConsumer listener) { motion = listener; publishedMotion = Float.NaN; }
     boolean changed() { return dirty; }
     boolean hasPendingAction() { return pendingAction != null; }
     boolean wasInterrupted() { return interrupted; }
@@ -497,7 +501,7 @@ final class HeaderStackPopup extends PopupWindow {
             pageMotion = true; publishTransition();
             scroll.setAlpha(0); scroll.setTranslationY(reducedMotion ? 0 : dp(2));
             pageAnimator = ValueAnimator.ofFloat(0, 1);
-            pageAnimator.setDuration(reducedMotion ? 120 : 220);
+            pageAnimator.setDuration(reducedMotion ? 120 : 200);
             pageAnimator.setInterpolator(MOTION_CURVE);
             pageAnimator.addUpdateListener(value -> {
                 float t = (float)value.getAnimatedValue();
@@ -654,7 +658,7 @@ final class HeaderStackPopup extends PopupWindow {
             panel.getOverlay().add(profileGhost);
         }
         source.lockForMenu(true);
-        surface.material.setEmphasized(source.hasFocus() || source.isActivated());
+        surface.setEmphasized(source.hasFocus() || source.isActivated());
         apply(0); windowRoot.setAlpha(0);
         blockUnderlayFocus();
         showing = true;
@@ -667,12 +671,10 @@ final class HeaderStackPopup extends PopupWindow {
             @Override public boolean onPreDraw() {
                 clearOpeningPreDraw();
                 timing.point("first_pre_draw");
-                windowRoot.postOnAnimation(() -> {
-                    if (!closing) {
-                        updateGhostTarget(); apply(0);
-                        windowRoot.setAlpha(1); source.setAlpha(0); animate(false);
-                    }
-                });
+                if (showing && !closing && !finished) {
+                    updateGhostTarget(); apply(0);
+                    windowRoot.setAlpha(1); source.setAlpha(0); animate(false);
+                }
                 return true;
             }
         };
@@ -682,17 +684,38 @@ final class HeaderStackPopup extends PopupWindow {
     private float height() { return dp(34) + (expandedHeight - dp(34)) * shape; }
     private static float smooth(float t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
     private void apply(float value) {
-        shape = value; surface.invalidateSelf(); windowRoot.invalidateOutline();
+        shape = value;
+        float w = width(), h = height(), radius = dp(17 + 6 * value);
         float alpha = smooth(value);
-        body.setAlpha(alpha); footer.setAlpha(alpha);
-        if (profileGhost != null) {
-            float blend = smooth(value);
-            float scale = 1 + (ghostScale - 1) * blend;
-            int left = Math.round(ghostX * blend), top = Math.round(ghostY * blend);
-            profileGhost.setBounds(left, top, left + Math.round(source.getWidth() * scale), top + Math.round(source.getHeight() * scale));
-            profileGhost.setAlpha(Math.round(255 * (1 - smooth(value / .78f))));
+        if (appliedWidth != w || appliedHeight != h || appliedRadius != radius || appliedMaterial != alpha) {
+            appliedWidth = w; appliedHeight = h; appliedRadius = radius; appliedMaterial = alpha;
+            surface.invalidateSelf();
         }
-        if (motion != null) motion.accept(value);
+        int clipW = Math.round(w), clipH = Math.round(h);
+        if (outlineWidth != clipW || outlineHeight != clipH || outlineRadius != radius) {
+            outlineWidth = clipW; outlineHeight = clipH; outlineRadius = radius;
+            windowRoot.invalidateOutline();
+        }
+        if (appliedAlpha != alpha) {
+            appliedAlpha = alpha;
+            body.setAlpha(alpha); footer.setAlpha(alpha);
+        }
+        if (profileGhost != null) {
+            int ghostAlpha = Math.round(255 * (1 - smooth(value / .78f)));
+            if (ghostAlpha != 0 || profileGhost.getAlpha() != 0) {
+                float scale = 1 + (ghostScale - 1) * alpha;
+                int left = Math.round(ghostX * alpha), top = Math.round(ghostY * alpha);
+                int right = left + Math.round(source.getWidth() * scale), bottom = top + Math.round(source.getHeight() * scale);
+                Rect bounds = profileGhost.getBounds();
+                if (bounds.left != left || bounds.top != top || bounds.right != right || bounds.bottom != bottom)
+                    profileGhost.setBounds(left, top, right, bottom);
+            }
+            if (profileGhost.getAlpha() != ghostAlpha) profileGhost.setAlpha(ghostAlpha);
+        }
+        if (motion != null && publishedMotion != value) {
+            publishedMotion = value;
+            motion.accept(value);
+        }
     }
     private void animate(boolean close) {
         timing.operation(close ? "close" : "open:" + pageTitle());
@@ -704,7 +727,7 @@ final class HeaderStackPopup extends PopupWindow {
         shapeMotion = true; publishTransition();
         float from = shape;
         if (close && from < .001f) { finishDismiss(); return; }
-        animator = ValueAnimator.ofFloat(0, 1); animator.setDuration(reducedMotion ? 140 : close ? 230 : 310);
+        animator = ValueAnimator.ofFloat(0, 1); animator.setDuration(reducedMotion ? 140 : close ? 220 : 280);
         animator.setInterpolator(MOTION_CURVE);
         animator.addUpdateListener(value -> {
             float t = (float)value.getAnimatedValue();
@@ -783,6 +806,7 @@ final class HeaderStackPopup extends PopupWindow {
 
     private final class Surface extends Drawable {
         final SettingsSurface material = new SettingsSurface(density);
+        void setEmphasized(boolean value) { material.setEmphasized(value); invalidateSelf(); }
         @Override public void draw(Canvas canvas) { material.drawSurface(canvas, width(), height(), dp(17 + 6*shape), smooth(shape)); }
         @Override public void setAlpha(int alpha) { material.setAlpha(alpha); invalidateSelf(); }
         @Override public void setColorFilter(ColorFilter filter) { material.setColorFilter(filter); invalidateSelf(); }

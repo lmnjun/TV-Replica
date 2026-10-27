@@ -869,7 +869,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         LinearLayout rows = popup.list();
         LinearLayout summary = new LinearLayout(this);
         summary.setOrientation(LinearLayout.VERTICAL);
-        summary.setPaddingRelative(popup.textStartInset(), (int)(8 * density), popup.textEndInset(), (int)(16 * density));
+        // This is plain connection data, with no icon column to reserve.
+        summary.setPaddingRelative(Math.round(12 * density), (int)(8 * density), Math.round(12 * density), (int)(16 * density));
         connectionName = popup.text("", 17, 600, 0xFFFFFFFF);
         connectionStatus = popup.text("", 11, 400, 0xBBFFFFFF);
         connectionAddress = popup.text("", 13, 500, 0xE6FFFFFF);
