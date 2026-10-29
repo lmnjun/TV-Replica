@@ -22,16 +22,23 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.Future;
 import org.json.JSONObject;
 
 /** City weather from device/network location, cached locally. */
 final class WeatherWidget extends LinearLayout {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
+    private final WeatherRequestGuard requests=new WeatherRequestGuard(WeatherCache.LOCK);
     private final SharedPreferences prefs;
     private final TextView temperature,condition,details,source,city;
     private final Glyph glyph;
-    private boolean active,loading,closed;
+    private boolean active,loading;
+    private volatile boolean closed;
+    private Future<?> pendingFetch;
+    /** Guarded by WeatherCache.LOCK, including registration versus close. */
+    private HttpURLConnection activeConnection;
     private static final long INTERVAL=30*60_000L;
 
     private final Runnable refresh=new Runnable(){@Override public void run(){if(!active)return;fetch(false);handler.postDelayed(this,INTERVAL);}};
@@ -61,7 +68,19 @@ final class WeatherWidget extends LinearLayout {
     private TextView text(String s,float size,int color){TextView t=new TextView(getContext());t.setText(s);t.setTextSize(size);t.setTextColor(color);t.setTypeface(getResources().getFont(R.font.inter_regular));t.setIncludeFontPadding(false);t.setSingleLine(true);t.setAllCaps(true);t.setGravity(Gravity.END);return t;}
     void start(){if(active||closed)return;active=true;handler.post(refresh);}
     void stop(){active=false;handler.removeCallbacks(refresh);}
-    void close(){closed=true;stop();worker.shutdownNow();handler.removeCallbacksAndMessages(null);}
+    void close(){
+        HttpURLConnection connection;
+        synchronized(WeatherCache.LOCK){
+            if(closed)return;
+            closed=true;requests.close();
+            connection=activeConnection;activeConnection=null;
+        }
+        stop();loading=false;
+        if(pendingFetch!=null){pendingFetch.cancel(true);pendingFetch=null;}
+        worker.shutdownNow();
+        if(connection!=null)connection.disconnect();
+        handler.removeCallbacksAndMessages(null);
+    }
     private void loadCache(boolean offline){
         String data=prefs.getString("json","");if(data.isEmpty()){condition.setText(offline?"Unavailable":"Loading…");return;}
         try{show(new JSONObject(data),offline);}catch(Exception e){condition.setText("Unavailable");}
@@ -69,25 +88,38 @@ final class WeatherWidget extends LinearLayout {
     private void fetch(boolean force){
         if(closed||loading)return;
         if(!force&&prefs.contains("latitude")&&System.currentTimeMillis()-prefs.getLong("fetched",0)<INTERVAL){loadCache(false);return;}
-        loading=true;worker.execute(()->{
+        final long token=requests.begin();if(token==0)return;
+        loading=true;pendingFetch=worker.submit(()->{
             HttpURLConnection connection=null;
             try{
-                detectLocation();
+                ensureCurrent(token);detectLocation(token);ensureCurrent(token);
                 WeatherCache.Request request=WeatherCache.request(prefs);
                 String endpoint="https://api.open-meteo.com/v1/forecast?latitude="+request.latitude+"&longitude="+request.longitude+"&current=temperature_2m,apparent_temperature,weather_code,is_day&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1";
-                connection=(HttpURLConnection)new URL(endpoint).openConnection();connection.setConnectTimeout(6000);connection.setReadTimeout(8000);connection.setRequestProperty("User-Agent","CleanYourTV-Weather/1.0");
+                connection=(HttpURLConnection)new URL(endpoint).openConnection();trackConnection(token,connection);connection.setConnectTimeout(6000);connection.setReadTimeout(8000);connection.setRequestProperty("User-Agent","CleanYourTV-Weather/1.0");
                 int code=connection.getResponseCode();if(code!=200)throw new java.io.IOException("HTTP "+code);
                 ByteArrayOutputStream bytes=new ByteArrayOutputStream();
-                try(InputStream input=connection.getInputStream()){byte[] buffer=new byte[4096];int n;while((n=input.read(buffer))!=-1){bytes.write(buffer,0,n);if(bytes.size()>128000)throw new java.io.IOException("Oversized response");}}
+                try(InputStream input=connection.getInputStream()){byte[] buffer=new byte[4096];int n;while((n=input.read(buffer))!=-1){ensureCurrent(token);bytes.write(buffer,0,n);if(bytes.size()>128000)throw new java.io.IOException("Oversized response");}}
                 String raw=bytes.toString("UTF-8");JSONObject data=new JSONObject(raw);data.getJSONObject("current").getDouble("temperature_2m");data.getJSONObject("daily").getJSONArray("temperature_2m_max").getDouble(0);
-                boolean published=WeatherCache.publish(prefs,request,raw);
-                handler.post(()->{loading=false;if(closed)return;try{if(published)show(data,false);else loadCache(false);}catch(Exception e){loadCache(true);}});
-                Log.i("Weather.Widget",prefs.getString("city","Unknown")+" updated: "+data.getJSONObject("current").toString());
-            }catch(Exception error){Log.w("Weather.Widget","Update failed: "+error.getClass().getSimpleName()+" "+error.getMessage());handler.post(()->{loading=false;if(!closed)loadCache(true);});}
-            finally{if(connection!=null)connection.disconnect();}
+                boolean published=requests.runIfCurrent(token,()->WeatherCache.publish(prefs,request,raw));
+                handler.post(()->{if(!requests.current(token))return;loading=false;pendingFetch=null;try{if(published)show(data,false);else loadCache(false);}catch(Exception e){loadCache(true);}});
+                if(requests.current(token))Log.i("Weather.Widget",prefs.getString("city","Unknown")+" updated: "+data.getJSONObject("current").toString());
+            }catch(CancellationException canceled){
+                // Closing/replacing Home invalidates both location and forecast publication.
+            }catch(Exception error){if(requests.current(token)){Log.w("Weather.Widget","Update failed: "+error.getClass().getSimpleName()+" "+error.getMessage());handler.post(()->{if(!requests.current(token))return;loading=false;pendingFetch=null;loadCache(true);});}}
+            finally{releaseConnection(connection);}
         });
     }
-    private void detectLocation()throws Exception{
+    private void ensureCurrent(long token){if(!requests.current(token)||Thread.currentThread().isInterrupted())throw new CancellationException();}
+    private void trackConnection(long token,HttpURLConnection connection){
+        if(!requests.runIfCurrent(token,()->{activeConnection=connection;return true;}))throw new CancellationException();
+    }
+    private void releaseConnection(HttpURLConnection connection){
+        if(connection==null)return;
+        synchronized(WeatherCache.LOCK){if(activeConnection==connection)activeConnection=null;}
+        connection.disconnect();
+    }
+    private void detectLocation(long token)throws Exception{
+        ensureCurrent(token);
         if(prefs.contains("latitude")&&System.currentTimeMillis()-prefs.getLong("location_time",0)<6*60*60_000L)return;
         try{
             android.location.LocationManager manager=(android.location.LocationManager)getContext().getSystemService(android.content.Context.LOCATION_SERVICE);
@@ -96,31 +128,32 @@ final class WeatherWidget extends LinearLayout {
                 if(loc!=null&&System.currentTimeMillis()-loc.getTime()<24*60*60_000L){
                     String name="Current location";
                     try{java.util.List<android.location.Address> addresses=new android.location.Geocoder(getContext(),Locale.ENGLISH).getFromLocation(loc.getLatitude(),loc.getLongitude(),1);if(addresses!=null&&!addresses.isEmpty()&&addresses.get(0).getLocality()!=null)name=addresses.get(0).getLocality();}catch(Exception ignored){}
-                    saveLocation(name,loc.getLatitude(),loc.getLongitude(),"device");return;
+                    saveLocation(token,name,loc.getLatitude(),loc.getLongitude(),"device");return;
                 }
             }
-        }catch(Exception ignored){}
+        }catch(CancellationException canceled){throw canceled;}catch(Exception ignored){}
         HttpURLConnection geo=null;
         try{
-            geo=(HttpURLConnection)new URL("https://ipwho.is/?fields=success,city,latitude,longitude").openConnection();geo.setConnectTimeout(5000);geo.setReadTimeout(6000);
+            ensureCurrent(token);geo=(HttpURLConnection)new URL("https://ipwho.is/?fields=success,city,latitude,longitude").openConnection();trackConnection(token,geo);geo.setConnectTimeout(5000);geo.setReadTimeout(6000);
             if(geo.getResponseCode()!=200)throw new java.io.IOException("Location unavailable");
-            ByteArrayOutputStream bytes=new ByteArrayOutputStream();try(InputStream input=geo.getInputStream()){byte[] b=new byte[2048];int n;while((n=input.read(b))!=-1){bytes.write(b,0,n);if(bytes.size()>16000)throw new java.io.IOException("Location response too large");}}
+            ByteArrayOutputStream bytes=new ByteArrayOutputStream();try(InputStream input=geo.getInputStream()){byte[] b=new byte[2048];int n;while((n=input.read(b))!=-1){ensureCurrent(token);bytes.write(b,0,n);if(bytes.size()>16000)throw new java.io.IOException("Location response too large");}}
             JSONObject json=new JSONObject(bytes.toString("UTF-8"));if(!json.optBoolean("success"))throw new java.io.IOException("Location unavailable");
-            saveLocation(json.getString("city"),json.getDouble("latitude"),json.getDouble("longitude"),"network");
-        }catch(Exception e){if(!prefs.contains("latitude"))throw e;}
-        finally{if(geo!=null)geo.disconnect();}
+            saveLocation(token,json.getString("city"),json.getDouble("latitude"),json.getDouble("longitude"),"network");
+        }catch(Exception e){ensureCurrent(token);if(!prefs.contains("latitude"))throw e;}
+        finally{releaseConnection(geo);}
     }
-    private void saveLocation(String name,double latitude,double longitude,String method)throws Exception{
+    private void saveLocation(long token,String name,double latitude,double longitude,String method)throws Exception{
         if(!Double.isFinite(latitude)||!Double.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180||name.isEmpty())throw new java.io.IOException("Invalid location");
-        synchronized(WeatherCache.LOCK){
+        if(!requests.runIfCurrent(token,()->{
             String lat=Double.toString(latitude),lon=Double.toString(longitude);
             boolean moved=!lat.equals(prefs.getString("latitude",""))||!lon.equals(prefs.getString("longitude",""));
             SharedPreferences.Editor editor=prefs.edit().putString("city",name).putString("latitude",lat).putString("longitude",lon)
                     .putString("location_method",method).putLong("location_time",System.currentTimeMillis());
             if(moved)editor.remove("json").putLong("fetched",0);
             editor.apply();
-        }
-        handler.post(()->{if(!closed)city.setText(name);});Log.i("Weather.Widget","Auto location: "+name+" ("+method+")");
+            return true;
+        }))throw new CancellationException();
+        handler.post(()->{if(requests.current(token))city.setText(name);});if(requests.current(token))Log.i("Weather.Widget","Auto location: "+name+" ("+method+")");
     }
     private void show(JSONObject data,boolean offline)throws Exception{
         JSONObject c=data.getJSONObject("current"),d=data.getJSONObject("daily");int code=c.getInt("weather_code");

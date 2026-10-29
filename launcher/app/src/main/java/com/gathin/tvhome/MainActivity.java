@@ -127,6 +127,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private String selectedScene;
     private boolean sceneForeground;
     private boolean menuWarmupAttempted;
+    private boolean headerMenuRequested;
+    private HeaderStackPopup preparedHeaderMenu;
+    private int preparedMenuWidth, preparedMenuHeight;
+    private android.content.res.Configuration preparedMenuConfiguration;
+    private ConnectionMonitor.Transport preparedMenuTransport;
     private int menuWarmupGeneration;
     private ViewTreeObserver menuWarmupObserver;
     private Runnable menuWarmupCommit, menuWarmupWork;
@@ -662,7 +667,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         try {
             // Prepare separately: a failed replacement must not destroy the visible scene.
             if (AmbientScenes.supports(next)) {
-                replacement = new AmbientScenes(this, root);
+                replacement = newAmbientSceneHost();
                 if (!replacement.select(next)) throw new IllegalStateException("Scene could not be prepared");
                 if (sceneForeground) replacement.start();
             } else if (saturn) {
@@ -696,6 +701,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         android.util.Log.i("Home.Scene", "selected=" + next + " previous=" + previous);
     }
 
+    private AmbientScenes newAmbientSceneHost() {
+        AmbientScenes host = new AmbientScenes(this, root);
+        host.setFailureListener((failed, scene) -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (failed == earthExploreHost && earthExploreState != null) {
+                // Never save controls for a globe that could not display the preview.
+                finishEarthExplore(true, false);
+                Toast.makeText(this, "Earth explore unavailable", Toast.LENGTH_SHORT).show();
+            } else if (failed == ambientScenes && sceneForeground) {
+                Toast.makeText(this, "Earth unavailable. Showing a static background.", Toast.LENGTH_SHORT).show();
+            }
+        });
+        return host;
+    }
+
     private void applyClockFormat() {
         TextClock clock = findViewById(R.id.clock);
         if (clock != null) ClockFormat.apply(clock);
@@ -704,7 +724,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
 
     /** Prepare the same window's menu pipelines after its first real submitted frame. */
     private void prepareStartupMenu() {
-        if (Build.VERSION.SDK_INT < 29 || menuWarmupAttempted || !sceneForeground || isFinishing()
+        if (Build.VERSION.SDK_INT < 29 || menuWarmupAttempted || headerMenuRequested || !sceneForeground || isFinishing()
                 || menuWarmupCommit != null || menuWarmupWork != null || menuWarmupAttach != null) return;
         final int ticket = ++menuWarmupGeneration;
         if (!root.isAttachedToWindow()) {
@@ -727,7 +747,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
                 @Override public void run() {
                     if (menuWarmupWork != this || ticket != menuWarmupGeneration) return;
                     menuWarmupWork = null;
-                    if (!sceneForeground || isFinishing() || !root.isAttachedToWindow() || !root.hasWindowFocus()
+                    if (!sceneForeground || headerMenuRequested || isFinishing() || !root.isAttachedToWindow() || !root.hasWindowFocus()
                             || headerControls != null || (openPopup != null && openPopup.isShowing())
                             || (profileSwitchDialog != null && profileSwitchDialog.isShowing())
                             || (cardPrompt != null && cardPrompt.isShowing()) || reordering) return;
@@ -737,6 +757,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
                             p -> headerHome(p), p -> headerSettings(p));
                     android.util.Log.i("Menu.Perf", "phase=startup_warmup prepared=" + prepared
                             + " duration_ms=" + (System.nanoTime() - begin) / 1_000_000.0);
+                    prepareHeaderMenu();
                 }
             };
             root.post(menuWarmupWork);
@@ -754,6 +775,54 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         if (Build.VERSION.SDK_INT >= 29 && menuWarmupObserver != null && menuWarmupObserver.isAlive()
                 && menuWarmupCommit != null) menuWarmupObserver.unregisterFrameCommitCallback(menuWarmupCommit);
         menuWarmupObserver = null; menuWarmupCommit = null; menuWarmupWork = null; menuWarmupAttach = null;
+        discardPreparedHeaderMenu();
+    }
+
+    /** One detached Home page for this Activity's first menu request; never replenished during use. */
+    private void prepareHeaderMenu() {
+        if (headerMenuRequested || preparedHeaderMenu != null || !sceneForeground || isFinishing()
+                || isDestroyed() || !root.isAttachedToWindow() || !root.hasWindowFocus()
+                || root.getWidth() <= 0 || root.getHeight() <= 0 || headerControls != null) return;
+        HeaderStackPopup menu = null;
+        long begin = System.nanoTime();
+        try {
+            menu = HeaderStackPopup.createPrepared(this, root, headerPill, animations, reducedMotion);
+            final HeaderStackPopup prepared = menu;
+            menu.setRoot("Home", () -> headerHome(prepared));
+            preparedMenuWidth = root.getWidth(); preparedMenuHeight = root.getHeight();
+            preparedMenuConfiguration = new android.content.res.Configuration(getResources().getConfiguration());
+            preparedMenuTransport = connectionMonitor.cachedSnapshot().transport;
+            preparedHeaderMenu = menu;
+            android.util.Log.i("Menu.Perf", "phase=home_prepared duration_ms=" + (System.nanoTime() - begin) / 1_000_000.0);
+        } catch (RuntimeException | LinkageError | OutOfMemoryError unavailable) {
+            if (menu != null) menu.disposePrepared();
+            android.util.Log.w("Menu.Perf", "phase=home_prepared unavailable=" + unavailable.getClass().getSimpleName());
+        }
+    }
+
+    private HeaderStackPopup takePreparedHeaderMenu() {
+        HeaderStackPopup menu = preparedHeaderMenu;
+        if (menu == null) {
+            android.util.Log.i("Menu.Perf", "phase=home_prepared consumed=false reason=absent");
+            return null;
+        }
+        boolean valid = preparedMenuWidth == root.getWidth() && preparedMenuHeight == root.getHeight()
+                && getResources().getConfiguration().equals(preparedMenuConfiguration)
+                && preparedMenuTransport == connectionMonitor.cachedSnapshot().transport;
+        preparedHeaderMenu = null; preparedMenuConfiguration = null; preparedMenuTransport = null;
+        if (!valid) {
+            menu.disposePrepared();
+            android.util.Log.i("Menu.Perf", "phase=home_prepared consumed=false reason=changed");
+            return null;
+        }
+        android.util.Log.i("Menu.Perf", "phase=home_prepared consumed=true");
+        return menu;
+    }
+
+    private void discardPreparedHeaderMenu() {
+        HeaderStackPopup menu = preparedHeaderMenu;
+        preparedHeaderMenu = null; preparedMenuConfiguration = null; preparedMenuTransport = null;
+        if (menu != null) menu.disposePrepared();
     }
 
     private boolean openLauncherSettingsIfAsked(Intent intent) {
@@ -821,6 +890,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     }
 
     private HeaderStackPopup ensureHeaderControls(Consumer<HeaderStackPopup> initialPage) {
+        headerMenuRequested = true;
         finishEarthExplore(false);
         if (reordering) endReorder();
         if (headerControls != null && headerControls.isShowing()) {
@@ -831,14 +901,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         cancelPendingFocusScroll(); grid.stopScroll();
         if (appLibrary != null) appLibrary.close();
         if (openPopup != null && openPopup.isShowing()) openPopup.dismiss();
-        final HeaderStackPopup popup = new HeaderStackPopup(this, root, headerPill, animations, reducedMotion);
+        HeaderStackPopup prepared = takePreparedHeaderMenu();
+        final HeaderStackPopup popup = prepared != null ? prepared
+                : new HeaderStackPopup(this, root, headerPill, animations, reducedMotion);
         headerControls = popup; openPopup = popup;
         popup.setTransitionListener(this::setOverlayMotionActive);
         popup.setMotionListener(progress -> {
             grid.setAlpha(1f - .72f * (float)progress);
             if (glassShown) { glass.animate().cancel(); glass.setAlpha(1f - (float)progress); }
         });
-        if (initialPage == null) popup.setRoot("Home", () -> headerHome(popup));
+        if (initialPage == null) {
+            if (prepared == null) popup.setRoot("Home", () -> headerHome(popup));
+        }
         else {
             popup.setRootMetadata("Home", () -> headerHome(popup));
             initialPage.accept(popup);
@@ -862,6 +936,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     }
 
     private View headerHome(HeaderStackPopup popup) {
+        long begin = System.nanoTime();
         LinearLayout rows = popup.list();
         ProfilePill current = ProfilePill.forMenu(this, () -> popup.dismissThen(this::chooseGoogleProfile));
         popup.control(current);
@@ -870,6 +945,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
                 || key == KeyEvent.KEYCODE_DPAD_RIGHT || key == KeyEvent.KEYCODE_DPAD_UP);
         LinearLayout.LayoutParams identity = new LinearLayout.LayoutParams(-1, (int)(64 * density));
         identity.bottomMargin = Math.round(8 * density); rows.addView(current, identity);
+        long profileReady = System.nanoTime();
         popup.row(rows, R.drawable.profile_add_account, "Add profile", null,
                 () -> popup.dismissThen(this::addGoogleProfile));
         ConnectionMonitor.Snapshot connection = connectionMonitor.cachedSnapshot();
@@ -880,6 +956,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
                 () -> popup.push("Inputs", () -> headerInputs(popup)));
         popup.row(rows, R.drawable.ic_settings_outline, "All Settings", null,
                 () -> popup.push("All Settings", () -> headerSettings(popup)));
+        long end = System.nanoTime();
+        android.util.Log.i("Menu.Perf", "phase=home_row_build start_ns=" + begin + " end_ns=" + end
+                + " profile_ms=" + (profileReady - begin) / 1_000_000.0
+                + " actions_ms=" + (end - profileReady) / 1_000_000.0);
         return rows;
     }
 
@@ -3033,7 +3113,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
             } else {
                 // Saver Earth can be edited while Home remains Weather/Saturn/Theme. Preview
                 // in a separately owned host; never change the owner's selected-scene key.
-                earthExplorePreview = new AmbientScenes(this, root);
+                earthExplorePreview = newAmbientSceneHost();
                 if (!earthExplorePreview.select(ScenePreferences.EARTH)) throw new IllegalStateException("Earth unavailable");
                 if (ambientScenes != null) ambientScenes.stop();
                 if (saturnScene != null) saturnScene.setVisible(false);

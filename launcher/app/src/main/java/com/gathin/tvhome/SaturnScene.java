@@ -157,7 +157,7 @@ final class SaturnScene {
     void toggleOrbits(){orbits=!orbits;renderer.dirty=true;save();log("orbits");}
     void toggleLabels(){labels=!labels;moonNames.invalidate();save();log("labels");}
     void systemView(){distance=distance<15?27:6.2f;renderer.dirty=true;save();log("view");}
-    synchronized void reset(){baseMillis=System.currentTimeMillis();anchor=SystemClock.elapsedRealtime();speed=1;paused=false;yaw=28;pitch=24;distance=6.2f;renderer.dirty=true;save();log("reset");}
+    synchronized void reset(){baseMillis=System.currentTimeMillis();anchor=SystemClock.elapsedRealtime();speed=1;paused=false;yaw=28;pitch=24;distance=6.2f;renderer.dirty=true;updateRenderMode();save();log("reset");}
     void explore(boolean value){exploring=value;help.setVisibility(value?View.VISIBLE:View.GONE);updateClock();log(value?"explore":"exit");}
     boolean exploring(){return exploring;}
     boolean handle(KeyEvent e){

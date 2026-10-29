@@ -43,15 +43,20 @@ final class HeaderStackPopup extends PopupWindow {
     private static final android.content.res.ColorStateList ICON_TINT = android.content.res.ColorStateList.valueOf(0xD9FFFFFF);
     private static final android.content.res.ColorStateList ARROW_TINT = android.content.res.ColorStateList.valueOf(0xAFFFFFFF);
     private static final android.view.animation.Interpolator MOTION_CURVE = new android.view.animation.PathInterpolator(.2f, 0, .2f, 1);
+    // Immutable resource metadata only: every control still gets its own mutated drawable.
+    // No View, account, photo, connection or page survives in this process-level cache.
+    private static Drawable.ConstantState controlBackgroundState;
+    private static float controlBackgroundDensity = Float.NaN;
     private static final class Page {
         final String title; final Supplier<View> build; Object focusTag;
         Page(String title, Supplier<View> build) { this.title = title; this.build = build; }
     }
     private static final class FocusState {
-        final View view; final int focusable, descendants;
+        final View view; final int focusable, descendants, accessibilityImportance;
         FocusState(View view) {
             this.view = view; focusable = view.getFocusable();
             descendants = view instanceof ViewGroup ? ((ViewGroup)view).getDescendantFocusability() : 0;
+            accessibilityImportance = view.getImportantForAccessibility();
         }
     }
     private final Activity activity;
@@ -81,6 +86,8 @@ final class HeaderStackPopup extends PopupWindow {
     private ValueAnimator animator, pageAnimator;
     private ViewTreeObserver openingObserver;
     private ViewTreeObserver.OnPreDrawListener openingPreDraw;
+    private ViewTreeObserver underlayObserver;
+    private ViewTreeObserver.OnGlobalLayoutListener underlayLayout;
     private Consumer<Boolean> transition;
     private DoubleConsumer motion;
     private OnDismissListener onClosed;
@@ -204,6 +211,16 @@ final class HeaderStackPopup extends PopupWindow {
         // Keep PopupWindow's public type for existing callers without creating a second HWUI window.
         setContentView(windowRoot);
         timing.end("construct", construct);
+    }
+
+    /** Keep optional preparation's sound ownership recoverable even if view construction fails. */
+    static HeaderStackPopup createPrepared(Activity activity, FrameLayout root, HeaderPillContainer source,
+                                           boolean animations, boolean reducedMotion) {
+        LauncherSounds owned = LauncherSounds.acquire(activity);
+        try { return new HeaderStackPopup(activity, root, source, animations, reducedMotion, false, owned); }
+        catch (RuntimeException | LinkageError | OutOfMemoryError unavailable) {
+            owned.close(); throw unavailable;
+        }
     }
 
     /**
@@ -337,6 +354,17 @@ final class HeaderStackPopup extends PopupWindow {
         pages.clear();
     }
 
+    /** Abandon a never-shown, detached menu without changing Home or firing dismissal actions. */
+    void disposePrepared() {
+        if (showing || finished || windowRoot.isAttachedToWindow()) return;
+        finished = true; pageGeneration++;
+        try {
+            cancelMenuAction(); clearOpeningPreDraw(); cancelPageAnimator();
+            body.removeAllViews(); currentBody = null; pages.clear();
+            pendingAction = null; onClosed = null; transition = null; motion = null;
+        } finally { sounds.close(); }
+    }
+
     @Override public boolean isShowing() { return showing; }
     @Override public void setOnDismissListener(OnDismissListener listener) { onClosed = listener; }
     boolean dispatchMenuKeyEvent(KeyEvent event) {
@@ -416,18 +444,23 @@ final class HeaderStackPopup extends PopupWindow {
     }
 
     void control(View view) {
-        android.graphics.drawable.StateListDrawable states = new android.graphics.drawable.StateListDrawable();
-        android.graphics.drawable.GradientDrawable active = new android.graphics.drawable.GradientDrawable();
-        active.setColor(0x295D5D5D); active.setCornerRadius(dp(12));
-        active.setStroke(Math.max(1, dp(1.2f)), 0xC9FFFFFF);
-        android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
-        normal.setColor(0x09181818); normal.setCornerRadius(dp(12));
-        android.graphics.drawable.GradientDrawable selected = new android.graphics.drawable.GradientDrawable();
-        selected.setColor(0x25484848); selected.setCornerRadius(dp(12));
-        selected.setStroke(Math.max(1, dp(.9f)), 0x80FFFFFF);
-        states.addState(new int[]{android.R.attr.state_focused}, active);
-        states.addState(new int[]{android.R.attr.state_selected}, selected); states.addState(new int[]{}, normal);
-        view.setBackground(states); view.setFocusable(true); view.setClickable(true); view.setSoundEffectsEnabled(false);
+        if (controlBackgroundState == null || controlBackgroundDensity != density) {
+            android.graphics.drawable.StateListDrawable states = new android.graphics.drawable.StateListDrawable();
+            android.graphics.drawable.GradientDrawable active = new android.graphics.drawable.GradientDrawable();
+            active.setColor(0x295D5D5D); active.setCornerRadius(dp(12));
+            active.setStroke(Math.max(1, dp(1.2f)), 0xC9FFFFFF);
+            android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
+            normal.setColor(0x09181818); normal.setCornerRadius(dp(12));
+            android.graphics.drawable.GradientDrawable selected = new android.graphics.drawable.GradientDrawable();
+            selected.setColor(0x25484848); selected.setCornerRadius(dp(12));
+            selected.setStroke(Math.max(1, dp(.9f)), 0x80FFFFFF);
+            states.addState(new int[]{android.R.attr.state_focused}, active);
+            states.addState(new int[]{android.R.attr.state_selected}, selected); states.addState(new int[]{}, normal);
+            controlBackgroundState = states.getConstantState(); controlBackgroundDensity = density;
+        }
+        // The template already stores this display's pixel dimensions; do not density-scale twice.
+        view.setBackground(controlBackgroundState.newDrawable().mutate());
+        view.setFocusable(true); view.setClickable(true); view.setSoundEffectsEnabled(false);
     }
 
     private void pointerSound() { if (!confirmingKey) sounds.selection(); }
@@ -485,16 +518,22 @@ final class HeaderStackPopup extends PopupWindow {
         int chromeHeight = panel.getPaddingTop() + panel.getPaddingBottom()
                 + (dirty ? dp(20) : 0);
         fullHeight = Math.min(maximumHeight, Math.max(dp(34), chromeHeight + contents.getMeasuredHeight()));
-        LinearLayout.LayoutParams bodyLp = (LinearLayout.LayoutParams)body.getLayoutParams();
-        int bodyHeight = Math.max(0, fullHeight - chromeHeight);
-        if (bodyLp.height != bodyHeight) { bodyLp.height = bodyHeight; body.setLayoutParams(bodyLp); }
+        final int bodyHeight = Math.max(0, fullHeight - chromeHeight);
         View old = currentBody;
+        boolean transitionPages = animate && isShowing() && animations && windowRoot.getAlpha() > 0;
+        int oldHeight = old == null ? 0 : old.getLayoutParams().height;
+        if (oldHeight < 0) oldHeight = old.getHeight();
+        // Each page keeps its own viewport while fading. Shrinking a shared MATCH_PARENT
+        // viewport first would cut off the outgoing page before the card has contracted.
+        int reservedBodyHeight = transitionPages ? Math.max(bodyHeight,
+                Math.max(oldHeight, Math.max(0, Math.round(expandedHeight) - chromeHeight))) : bodyHeight;
+        setBodyHeight(reservedBodyHeight);
         if (old != null) retirePage(old);
         currentBody = scroll;
-        body.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        body.addView(scroll, new FrameLayout.LayoutParams(-1, bodyHeight));
         // Reserve only the larger endpoint once, then resize the actual window at rest.
-        if (isShowing()) resizeWindow(Math.max(windowHeight, fullHeight));
-        if (animate && isShowing() && animations && windowRoot.getAlpha() > 0) {
+        if (isShowing()) resizeWindow(Math.max(windowHeight, reservedBodyHeight + chromeHeight));
+        if (transitionPages) {
             timing.operation("page:" + page.title);
             // Only card geometry changes per frame; the upper-left window anchor stays fixed.
             final float fromHeight = expandedHeight, oldAlpha = old == null ? 0 : old.getAlpha();
@@ -514,6 +553,7 @@ final class HeaderStackPopup extends PopupWindow {
                 @Override public void onAnimationEnd(Animator animation) {
                     if (generation != pageGeneration) return;
                     if (old != null) body.removeView(old);
+                    setBodyHeight(bodyHeight);
                     expandedHeight = fullHeight; pageMotion = false; pageAnimator = null;
                     apply(shape); publishTransition(); settleWindow();
                 }
@@ -536,6 +576,11 @@ final class HeaderStackPopup extends PopupWindow {
             pageAnimator.removeAllListeners(); pageAnimator.cancel(); pageAnimator = null;
         }
         pageMotion = false;
+    }
+
+    private void setBodyHeight(int height) {
+        LinearLayout.LayoutParams layout = (LinearLayout.LayoutParams)body.getLayoutParams();
+        if (layout.height != height) { layout.height = height; body.setLayoutParams(layout); }
     }
 
     private void resizeWindow(int height) {
@@ -752,19 +797,37 @@ final class HeaderStackPopup extends PopupWindow {
         }
     }
     private void blockUnderlayFocus() {
+        isolateUnderlay();
+        // Scene changes can attach a new background layer while this same-window menu is open.
+        // Observe layouts, not animation frames, and preserve every newly attached layer's state.
+        underlayObserver = root.getViewTreeObserver();
+        underlayLayout = () -> { if (showing && !finished) isolateUnderlay(); };
+        underlayObserver.addOnGlobalLayoutListener(underlayLayout);
+    }
+    private void isolateUnderlay() {
         for (int i = 0; i < root.getChildCount(); i++) {
             View child = root.getChildAt(i);
+            if (child == modalShield) continue;
+            boolean saved = false;
+            for (FocusState state : underlayFocus) if (state.view == child) { saved = true; break; }
+            if (saved) continue;
             underlayFocus.add(new FocusState(child));
             if (child instanceof ViewGroup)
                 ((ViewGroup)child).setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
             if (child.isFocusable()) child.setFocusable(View.NOT_FOCUSABLE);
+            child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         }
     }
     private void restoreUnderlayFocus() {
+        if (underlayObserver != null && underlayLayout != null && underlayObserver.isAlive())
+            underlayObserver.removeOnGlobalLayoutListener(underlayLayout);
+        underlayObserver = null; underlayLayout = null;
         for (FocusState saved : underlayFocus) {
             if (saved.view instanceof ViewGroup)
                 ((ViewGroup)saved.view).setDescendantFocusability(saved.descendants);
             if (saved.view.getFocusable() != saved.focusable) saved.view.setFocusable(saved.focusable);
+            if (saved.view.getImportantForAccessibility() != saved.accessibilityImportance)
+                saved.view.setImportantForAccessibility(saved.accessibilityImportance);
         }
         underlayFocus.clear();
     }

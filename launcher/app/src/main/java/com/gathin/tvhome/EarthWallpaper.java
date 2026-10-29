@@ -6,6 +6,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.RadialGradient;
+import android.graphics.Shader;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
@@ -31,13 +33,15 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
     private final GLSurfaceView surface;
     private final Globe renderer;
     private final Caption caption;
+    private final SceneRenderGuard renderGuard = new SceneRenderGuard();
     private final SharedPreferences options;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable optionsUpdate = this::refreshOptions;
     private final SharedPreferences.OnSharedPreferenceChangeListener optionsChanged = (prefs, key) -> {
         if (SceneOptions.ownsKey("earth", key)) { handler.removeCallbacks(optionsUpdate); handler.post(optionsUpdate); }
     };
-    private boolean running, closed, configured, viewExploring;
+    private boolean running, closed, configured, rendererResumed, viewExploring;
+    private Runnable failureListener;
     private boolean frameRateRequested;
     private final SurfaceHolder.Callback frameRateLifecycle = new SurfaceHolder.Callback() {
         @Override public void surfaceCreated(SurfaceHolder holder) {
@@ -68,7 +72,7 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
     EarthWallpaper(Context context) {
         super(context); setBackgroundColor(0xFF000000); setFocusable(false);
         options = context.getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE);
-        renderer = new Globe(context.getApplicationContext());
+        renderer = new Globe(context.getApplicationContext(), renderGuard, this::onRendererFailed);
         surface = new GLSurfaceView(context); surface.setEGLContextClientVersion(2);
         surface.setEGLConfigChooser(8, 8, 8, 0, 0, 0);
         surface.setPreserveEGLContextOnPause(true);
@@ -98,6 +102,10 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
         renderer.atmosphere = SceneOptions.earthAtmosphere(getContext());
         renderer.showStars = SceneOptions.earthStars(getContext());
         publishCamera();
+        if (caption.renderUnavailable) {
+            setContentDescription("Earth static background. The textured scene is unavailable.");
+            return;
+        }
         setContentDescription("Earth. " + (caption.showLocation ? caption.label + ". " + caption.detail + ". " : "")
                 + "The saved-location marker follows the globe and is hidden on its far side. "
                 + "NASA and NOAA historical day and city-light composites; approximate sunlight, not live satellite imagery.");
@@ -111,10 +119,12 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
         renderer.camera = camera; caption.camera = camera; caption.hasLocation = hasSavedLocation; caption.invalidate();
     }
     /** Main-thread exploration is temporary; only Main's explicit exit commits the final values. */
-    void beginViewExplore() {
-        if (closed || !running || viewExploring) return;
+    boolean beginViewExplore() {
+        if (closed || !running || renderGuard.failure() != 0) return false;
+        if (viewExploring) return true;
         exploreZoom = SceneOptions.earthZoom(getContext()); exploreYaw = SceneOptions.earthYaw(getContext());
         explorePitch = SceneOptions.earthPitch(getContext()); viewExploring = true; publishCamera();
+        return true;
     }
     void previewView(float zoom, float yaw, float pitch) {
         if (closed || !running || !viewExploring) return;
@@ -129,7 +139,7 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
     /** A local compositor hint only; never changes texture/buffer quality or submits work per frame. */
     private void updateSurfaceFrameRate() {
         if (Build.VERSION.SDK_INT < 30 || surface == null) return;
-        if (!running || closed || !isAttachedToWindow() || getWindowVisibility() != VISIBLE || !isShown()) {
+        if (!running || closed || renderGuard.failure() != 0 || !isAttachedToWindow() || getWindowVisibility() != VISIBLE || !isShown()) {
             clearSurfaceFrameRate(); return;
         }
         Surface target = surface.getHolder().getSurface();
@@ -157,13 +167,55 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
     @Override public void start() {
         if (closed || running) return; running = true;
         options.registerOnSharedPreferenceChangeListener(optionsChanged); applyOptions();
+        long failure = renderGuard.failure();
+        if (failure != 0) { showRendererFallback(failure); return; }
         if (isAttachedToWindow()) startRenderer();
     }
     private void startRenderer() {
+        if (closed || !running || renderGuard.failure() != 0 || rendererResumed) return;
         // setRenderer starts a GL thread: defer it until this selected, active view is attached.
         if (!configured) { surface.setRenderer(renderer); configured = true; }
-        surface.onResume(); surface.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+        surface.onResume(); rendererResumed = true; surface.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         updateSurfaceFrameRate();
+    }
+    void setFailureListener(Runnable listener) {
+        failureListener = listener;
+        long failure = renderGuard.failure();
+        if (failure != 0 && running && !closed) showRendererFallback(failure);
+    }
+
+    /** Called by the GL thread; stale or retired contexts may never replace a newer visible scene. */
+    private void onRendererFailed(long generation, Throwable failure) {
+        if (!renderGuard.fail(generation)) return;
+        Log.w("Ambient.Earth", "Renderer unavailable; retiring GL for a static visible background", failure);
+        handler.post(() -> showRendererFallback(generation));
+    }
+
+    private void showRendererFallback(long generation) {
+        if (closed || !renderGuard.useFallback(generation)) return;
+        viewExploring = false;
+        // This overlay was allocated before texture decoding, so OOM recovery needs no new bitmap.
+        caption.renderUnavailable = true; caption.invalidate();
+        surface.setVisibility(View.GONE);
+        setContentDescription("Earth static background. The textured scene is unavailable.");
+        clearSurfaceFrameRate();
+        try {
+            surface.setPreserveEGLContextOnPause(false);
+            pauseRenderer();
+        } catch (RuntimeException | LinkageError unavailable) {
+            Log.w("Ambient.Earth", "Failed surface could not pause normally; detaching it", unavailable);
+        } finally {
+            // Detach also releases partially loaded GL resources, even if a failure arrived while paused.
+            if (surface.getParent() == this) removeView(surface);
+            rendererResumed = false;
+        }
+        if (failureListener != null && renderGuard.claimFailure(generation, running)) failureListener.run();
+    }
+
+    private void pauseRenderer() {
+        if (!configured || !rendererResumed) return;
+        surface.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
+        surface.onPause(); rendererResumed = false;
     }
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow(); if (running && !closed) startRenderer();
@@ -175,17 +227,17 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
         super.onVisibilityChanged(changed, visibility); updateSurfaceFrameRate();
     }
     @Override protected void onDetachedFromWindow() {
-        clearSurfaceFrameRate(); super.onDetachedFromWindow();
+        clearSurfaceFrameRate(); pauseRenderer(); super.onDetachedFromWindow();
     }
     @Override public void stop() {
         if (!running) return; running = false;
         clearSurfaceFrameRate();
         viewExploring = false; // Resume always reads the persisted normal view, never stale controls.
         options.unregisterOnSharedPreferenceChangeListener(optionsChanged); handler.removeCallbacks(optionsUpdate);
-        if (configured) { surface.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY); surface.onPause(); }
+        pauseRenderer();
     }
     @Override public void close() {
-        if (closed) return; stop(); closed = true;
+        if (closed) return; closed = true; renderGuard.close(); failureListener = null; stop();
         handler.removeCallbacksAndMessages(null);
         surface.removeOnLayoutChangeListener(sizing);
         surface.getHolder().removeCallback(frameRateLifecycle);
@@ -194,16 +246,34 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
 
     private final class Caption extends View {
         final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Paint fallback = new Paint(Paint.ANTI_ALIAS_FLAG);
         final float dp;
         String label = "EARTH", detail = "LOCATION NOT AVAILABLE";
-        boolean showLocation = true, hasLocation;
+        boolean showLocation = true, hasLocation, renderUnavailable;
         EarthCamera.State camera;
         Caption(Context context) {
             super(context); dp = getResources().getDisplayMetrics().density;
             text.setTypeface(InterTypography.face(context, 500)); text.setTextAlign(Paint.Align.CENTER);
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         }
+        @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            float radius = Math.max(1, Math.min(w, h) * .24f);
+            fallback.setShader(new RadialGradient(w * .5f - radius * .35f, h * .46f - radius * .4f,
+                    radius * 1.45f, new int[]{0xFF376A85, 0xFF17394D, 0xFF06121F},
+                    new float[]{0, .55f, 1}, Shader.TileMode.CLAMP));
+        }
         @Override protected void onDraw(Canvas canvas) {
+            if (renderUnavailable) {
+                canvas.drawColor(0xFF030811);
+                canvas.drawCircle(getWidth() * .5f, getHeight() * .46f,
+                        Math.min(getWidth(), getHeight()) * .24f, fallback);
+                text.setTextSize(10 * dp); text.setColor(0xCCFFFFFF);
+                canvas.drawText("EARTH", getWidth() * .5f, getHeight() * .77f, text);
+                text.setTextSize(7.5f * dp); text.setColor(0x80FFFFFF);
+                canvas.drawText("STATIC BACKGROUND", getWidth() * .5f, getHeight() * .77f + 18 * dp, text);
+                return;
+            }
             float aspect = getWidth() / (float)Math.max(1, getHeight());
             if (showLocation && (!hasLocation || camera != null && camera.markerVisible(aspect))) {
                 float x = getWidth() * .5f, y = getHeight() * .46f + 22 * dp;
@@ -226,8 +296,12 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
     }
 
     private static final class Globe implements GLSurfaceView.Renderer {
+        interface FailureListener { void failed(long generation, Throwable failure); }
         private static final int LAT = 48, LON = 96;
         private final Context context;
+        private final SceneRenderGuard renderGuard;
+        private final FailureListener failureListener;
+        private long contextGeneration;
         private final FloatBuffer vertices, stars, markerPoint;
         private final ShortBuffer indices;
         private final int indexCount;
@@ -249,8 +323,8 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
             String dimensions() { return width + "x" + height; }
         }
 
-        Globe(Context context) {
-            this.context = context;
+        Globe(Context context, SceneRenderGuard renderGuard, FailureListener failureListener) {
+            this.context = context; this.renderGuard = renderGuard; this.failureListener = failureListener;
             float[] mesh = new float[(LAT + 1) * (LON + 1) * 5]; int n = 0;
             for (int y = 0; y <= LAT; y++) {
                 double lat = Math.PI * (y / (double)LAT - .5);
@@ -279,6 +353,8 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
 
         @Override public void onSurfaceCreated(GL10 gl, EGLConfig config) {
             ready = false; nightAvailable = false; texture = nightTexture = null;
+            contextGeneration = renderGuard.beginContext();
+            if (contextGeneration == 0) return;
             try {
                 int[] maximum = new int[1]; GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, maximum, 0);
                 if (maximum[0] <= 0) throw new IllegalStateException("Missing GL texture size capability");
@@ -323,6 +399,7 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
                         + " uv=" + uvPrecision + " anisotropy=1 planetPasses=1 vertexLighting=true requestedDepth=0 glError=0x0");
             } catch (Exception | OutOfMemoryError failure) {
                 Log.w("Ambient.Earth", "ready=false glError=0x" + Integer.toHexString(GLES20.glGetError()), failure);
+                failureListener.failed(contextGeneration, failure);
             }
         }
 
@@ -334,7 +411,7 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
 
         @Override public void onDrawFrame(GL10 gl) {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-            if (!ready) return;
+            if (!ready || renderGuard.failed(contextGeneration)) return;
             EarthCamera.State view = camera;
             // Keep the existing ~1.25-buffer-pixel rim as the real camera distance changes.
             edgeFade = (float)Math.sqrt(2.5 / Math.max(1f, bufferHeight * .5f * view.radiusY()));

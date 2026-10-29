@@ -9,6 +9,7 @@ import android.widget.FrameLayout;
 
 /** Context-only Home/Dream wallpaper host. It owns no account, network or clock settings. */
 final class AmbientScenes {
+    interface FailureListener { void onFailure(AmbientScenes host, String scene); }
     interface Layer {
         View view();
         void update(AmbientSnapshot snapshot);
@@ -31,6 +32,7 @@ final class AmbientScenes {
     private AmbientWeatherRefresh weatherRefresh;
     private String selected = "";
     private boolean active, closed;
+    private FailureListener failureListener;
 
     AmbientScenes(Context context, FrameLayout root) {
         this.context = context; parent = root;
@@ -49,7 +51,14 @@ final class AmbientScenes {
         if (id.equals(selected)) return true;
         Layer next = null;
         try {
-            if ("earth".equals(id)) next = new EarthWallpaper(context);
+            if ("earth".equals(id)) {
+                EarthWallpaper earth = new EarthWallpaper(context);
+                earth.setFailureListener(() -> {
+                    if (!closed && active && layer == earth && failureListener != null)
+                        failureListener.onFailure(this, "earth");
+                });
+                next = earth;
+            }
             else if ("weather".equals(id)) next = new WeatherWallpaper(context);
             else next = new FlipWallpaper(context);
             next.update(new AmbientSnapshot(weather));
@@ -87,10 +96,12 @@ final class AmbientScenes {
 
     void setBurnInOffset(float xPx, float yPx) { container.setTranslationX(xPx); container.setTranslationY(yPx); }
 
+    /** Install before start; renderer failure never changes the owner's selected-scene preferences. */
+    void setFailureListener(FailureListener listener) { failureListener = listener; }
+
     boolean beginEarthViewExplore() {
         if (closed || !active || !(layer instanceof EarthWallpaper)) return false;
-        ((EarthWallpaper)layer).beginViewExplore();
-        return true;
+        return ((EarthWallpaper)layer).beginViewExplore();
     }
 
     void previewEarthView(float zoom, float yaw, float pitch) {
@@ -104,7 +115,7 @@ final class AmbientScenes {
 
     void close() {
         if (closed) return;
-        closed = true;
+        closed = true; failureListener = null;
         try { stop(); }
         finally {
             handler.removeCallbacksAndMessages(null);
