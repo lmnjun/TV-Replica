@@ -305,6 +305,10 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
         private final FloatBuffer vertices, stars, markerPoint;
         private final ShortBuffer indices;
         private final int indexCount;
+        // Context-local mesh VBO, index IBO and star VBO. Keep the exact CPU data for
+        // context recreation and the allocation-failure fallback; never upload per frame.
+        private final int[] geometryBuffers = new int[3];
+        private boolean bufferedGeometry;
         private final float[] sun = new float[3];
         private int planetProgram, pointProgram;
         private Texture texture, nightTexture;
@@ -353,6 +357,9 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
 
         @Override public void onSurfaceCreated(GL10 gl, EGLConfig config) {
             ready = false; nightAvailable = false; texture = nightTexture = null;
+            planetProgram = pointProgram = 0; bufferedGeometry = false;
+            // A recreated context has its own name space. Never delete stale names in it.
+            for (int i = 0; i < geometryBuffers.length; i++) geometryBuffers[i] = 0;
             contextGeneration = renderGuard.beginContext();
             if (contextGeneration == 0) return;
             try {
@@ -382,6 +389,10 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
                 sPosition = GLES20.glGetAttribLocation(pointProgram, "aPosition");
                 sSize = GLES20.glGetUniformLocation(pointProgram, "uSize");
                 sColor = GLES20.glGetUniformLocation(pointProgram, "uColor");
+                int initialError = GLES20.glGetError();
+                if (initialError != GLES20.GL_NO_ERROR)
+                    throw new IllegalStateException("Earth program GL error 0x" + Integer.toHexString(initialError));
+                bufferedGeometry = uploadStaticGeometry();
                 texture = loadPreferredTexture("ambient/earth_nasa_day_4096.jpg", "ambient/earth_nasa_2002.jpg");
                 try {
                     nightTexture = loadPreferredTexture("ambient/earth_nasa_night_2016_4096.jpg", "ambient/earth_nasa_night_2004.png"); nightAvailable = true;
@@ -396,8 +407,11 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
                 ready = true;
                 Log.i("Ambient.Earth", "ready=true day=" + texture.dimensions() + " night=" + nightAvailable
                         + " nightSize=" + nightTexture.dimensions() + " maxTexture=" + maxTextureSize
-                        + " uv=" + uvPrecision + " anisotropy=1 planetPasses=1 vertexLighting=true requestedDepth=0 glError=0x0");
+                        + " uv=" + uvPrecision + " anisotropy=1 planetPasses=1 vertexLighting=true requestedDepth=0 glError=0x0"
+                        + " geometry=" + (bufferedGeometry ? "vbo" : "client") + " geometryBytes="
+                        + (bufferedGeometry ? vertices.capacity() * 4 + indices.capacity() * 2 + stars.capacity() * 4 : 0));
             } catch (Exception | OutOfMemoryError failure) {
+                deleteGeometryBuffers();
                 Log.w("Ambient.Earth", "ready=false glError=0x" + Integer.toHexString(GLES20.glGetError()), failure);
                 failureListener.failed(contextGeneration, failure);
             }
@@ -421,7 +435,13 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
             GLES20.glDisable(GLES20.GL_DEPTH_TEST); GLES20.glDisable(GLES20.GL_CULL_FACE);
             if (showStars) {
                 GLES20.glEnable(GLES20.GL_BLEND); GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
-                GLES20.glUseProgram(pointProgram); pointData(stars); GLES20.glUniform1f(sSize, 1.25f);
+                GLES20.glUseProgram(pointProgram);
+                if (bufferedGeometry) {
+                    GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, geometryBuffers[2]);
+                    GLES20.glEnableVertexAttribArray(sPosition);
+                    GLES20.glVertexAttribPointer(sPosition, 2, GLES20.GL_FLOAT, false, 8, 0);
+                } else pointData(stars);
+                GLES20.glUniform1f(sSize, 1.25f);
                 GLES20.glUniform4f(sColor, .7f, .76f, .86f, .24f); GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 160);
                 GLES20.glDisableVertexAttribArray(sPosition);
             }
@@ -438,10 +458,20 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
             GLES20.glUniform1f(pPulse, .91f + .025f * pulse);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture.id);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, nightTexture.id);
-            vertices.position(0); GLES20.glVertexAttribPointer(pPosition, 3, GLES20.GL_FLOAT, false, 20, vertices);
-            vertices.position(3); GLES20.glVertexAttribPointer(pUv, 2, GLES20.GL_FLOAT, false, 20, vertices);
+            if (bufferedGeometry) {
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, geometryBuffers[0]);
+                GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, geometryBuffers[1]);
+                GLES20.glVertexAttribPointer(pPosition, 3, GLES20.GL_FLOAT, false, 20, 0);
+                GLES20.glVertexAttribPointer(pUv, 2, GLES20.GL_FLOAT, false, 20, 12);
+            } else {
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
+                GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, 0);
+                vertices.position(0); GLES20.glVertexAttribPointer(pPosition, 3, GLES20.GL_FLOAT, false, 20, vertices);
+                vertices.position(3); GLES20.glVertexAttribPointer(pUv, 2, GLES20.GL_FLOAT, false, 20, vertices);
+            }
             GLES20.glEnableVertexAttribArray(pPosition); GLES20.glEnableVertexAttribArray(pUv);
-            GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, indices);
+            if (bufferedGeometry) GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, 0);
+            else { indices.position(0); GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, indices); }
             GLES20.glDisableVertexAttribArray(pPosition); GLES20.glDisableVertexAttribArray(pUv);
             if (marker && view.markerVisible(aspect)) {
                 markerPoint.put(0, view.markerX(aspect)); markerPoint.put(1, view.markerY());
@@ -452,12 +482,60 @@ final class EarthWallpaper extends FrameLayout implements AmbientScenes.Layer {
                 GLES20.glUniform1f(sSize, 4); GLES20.glUniform4f(sColor, 1, 1, 1, 1);
                 GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 1); GLES20.glDisableVertexAttribArray(sPosition);
             }
+            GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
+            GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, 0);
             GLES20.glDisable(GLES20.GL_BLEND);
         }
 
         private void pointData(FloatBuffer data) {
+            // The marker remains a tiny CPU point. A Buffer argument must never inherit a VBO binding.
+            GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
+            GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, 0);
             data.position(0); GLES20.glEnableVertexAttribArray(sPosition);
             GLES20.glVertexAttribPointer(sPosition, 2, GLES20.GL_FLOAT, false, 8, data);
+        }
+
+        private boolean uploadStaticGeometry() {
+            try {
+                GLES20.glGenBuffers(geometryBuffers.length, geometryBuffers, 0);
+                for (int id : geometryBuffers) if (id == 0)
+                    throw new IllegalStateException("Earth geometry buffer allocation failed");
+                vertices.position(0); indices.position(0); stars.position(0);
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, geometryBuffers[0]);
+                GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, vertices.capacity() * 4, vertices, GLES20.GL_STATIC_DRAW);
+                checkGeometryUpload();
+                GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, geometryBuffers[1]);
+                GLES20.glBufferData(GLES20.GL_ELEMENT_ARRAY_BUFFER, indices.capacity() * 2, indices, GLES20.GL_STATIC_DRAW);
+                checkGeometryUpload();
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, geometryBuffers[2]);
+                GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, stars.capacity() * 4, stars, GLES20.GL_STATIC_DRAW);
+                checkGeometryUpload();
+                return true;
+            } catch (RuntimeException | OutOfMemoryError unavailable) {
+                deleteGeometryBuffers();
+                // Only this optional upload's errors are cleared. Program errors were checked first.
+                for (int i = 0; i < 8 && GLES20.glGetError() != GLES20.GL_NO_ERROR; i++) { }
+                Log.w("Ambient.Earth", "Static geometry unavailable; keeping the exact client-array mesh", unavailable);
+                return false;
+            } finally {
+                GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
+                GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, 0);
+            }
+        }
+
+        private static void checkGeometryUpload() {
+            int error = GLES20.glGetError();
+            if (error != GLES20.GL_NO_ERROR)
+                throw new IllegalStateException("Earth geometry upload GL error 0x" + Integer.toHexString(error));
+        }
+
+        /** GL-thread cleanup of this context's names only; ordinary detach destroys the context. */
+        private void deleteGeometryBuffers() {
+            GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0);
+            GLES20.glBindBuffer(GLES20.GL_ELEMENT_ARRAY_BUFFER, 0);
+            GLES20.glDeleteBuffers(geometryBuffers.length, geometryBuffers, 0);
+            for (int i = 0; i < geometryBuffers.length; i++) geometryBuffers[i] = 0;
+            bufferedGeometry = false;
         }
         private Texture loadPreferredTexture(String detailed, String fallback) throws java.io.IOException {
             if (maxTextureSize >= 4096) {

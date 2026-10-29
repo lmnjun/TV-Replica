@@ -34,6 +34,7 @@ import java.util.Map;
  */
 final class Config {
     final boolean saturnScene;
+    final LauncherMenuConfig menuDefaults;
     private static final String TAG = "TvHome.Config";
     static final String FILE_NAME = "config.json";
     static final String WALLPAPER_NAME = "wallpaper.jpg";
@@ -140,8 +141,10 @@ final class Config {
                    int[] settingsKeycodes, boolean settingsKeyPanel, boolean wallpaperEnabled, File wallpaper, List<File> wallpapers,
                    int wallpaperRotationMinutes, int wallpaperDim, String wallpaperOrder, boolean overlayApplied,
                    Festival festival, int[] inputKeycodes, List<String> appKeys,
-                   List<RaceWeekend.Race> raceCalendar, boolean cinematicHome, boolean ambientGlow, int homeIdleClockMinutes, boolean saturnScene) {
+                   List<RaceWeekend.Race> raceCalendar, boolean cinematicHome, boolean ambientGlow, int homeIdleClockMinutes, boolean saturnScene,
+                   LauncherMenuConfig menuDefaults) {
         this.saturnScene = saturnScene;
+        this.menuDefaults = menuDefaults;
         this.inputKeycodes = inputKeycodes;
         this.appKeys = Collections.unmodifiableList(appKeys);
         this.dockApps = Collections.unmodifiableList(dockApps);
@@ -297,6 +300,10 @@ final class Config {
         SharedPreferences choices = ctx.getSharedPreferences(SETTINGS_NAME, Context.MODE_PRIVATE);
         // Unmounted storage looks like a theme reset; compare only once the file is readable.
         if (mounted) syncThemeChoices(choices, dir, file);
+        // Capture the active theme before TV overrides, so Follow theme can resolve without file I/O.
+        int themeColumns = columns, themeRows = rowsBelow;
+        boolean themeAnimations = animations, themeAdvanced = advancedEffects;
+        boolean themeSaturn = json != null && bool(json, "saturn_scene", false);
         int chosenColumns = choices.getInt("columns", columns);
         if (chosenColumns >= 4 && chosenColumns <= 7) columns = chosenColumns;
         int chosenRows = choices.getInt(ROWS_BELOW_DOCK_KEY, rowsBelow);
@@ -305,6 +312,8 @@ final class Config {
         advancedEffects = choices.getBoolean("advanced_effects", advancedEffects);
         File wallpaper = dir != null ? new File(dir, WALLPAPER_NAME) : null;
         if (wallpaper != null && !(wallpaper.isFile() && wallpaper.length() > 0)) wallpaper = null;
+        List<String> knownWallpapers = new ArrayList<>();
+        if (wallpaper != null) knownWallpapers.add(wallpaper.getName());
         // A theme can also switch the wallpaper off while the file is still there.
         boolean wallpaperEnabled = json == null || bool(json, "wallpaper", true);
         if (!wallpaperEnabled) wallpaper = null;
@@ -319,6 +328,7 @@ final class Config {
             wallpapers.addAll(WallpaperRotation.images(new File(dir, "wallpapers")));
         }
         if (wallpapers.isEmpty() && wallpaper != null) wallpapers.add(wallpaper);
+        for (File image : wallpapers) knownWallpapers.add(image.getName());
         // An on-TV wallpaper pick overrides the theme: a filename from the wallpapers/
         // collection, or "none". Unset means the theme decides (off by default).
         String wallpaperChoice = choices.getString(WALLPAPER_CHOICE_KEY, null);
@@ -337,6 +347,7 @@ final class Config {
                     && singleImage.isFile() && singleImage.length() > 0) picked = singleImage;
             if (picked != null) {
                 explicitWallpaper = true;
+                knownWallpapers.add(picked.getName());
                 wallpapers.clear();
                 wallpapers.add(picked);
                 wallpaper = picked;
@@ -355,8 +366,9 @@ final class Config {
                 Math.max(0, Math.min(100, skyIntensity)), settingsKeycodes, settingsKeyPanel, wallpaperEnabled, wallpaper,
                 wallpapers, rotationMinutes, wallpaperDim, wallpaperOrder, applied,
                 festival, inputKeycodes, appKeys, json == null ? Collections.emptyList() : raceCalendar(json), cinematic, ambientGlow,
-                Math.max(0, idleClockMinutes), json != null && bool(json, "saturn_scene", false)
-                        && !(explicitWallpaper && choices.getBoolean(WALLPAPER_SCENE_OVERRIDE_KEY, false)));
+                Math.max(0, idleClockMinutes), themeSaturn
+                        && !(explicitWallpaper && choices.getBoolean(WALLPAPER_SCENE_OVERRIDE_KEY, false)),
+                new LauncherMenuConfig(themeColumns, themeRows, themeAnimations, themeAdvanced, themeSaturn, knownWallpapers));
     }
 
     /**

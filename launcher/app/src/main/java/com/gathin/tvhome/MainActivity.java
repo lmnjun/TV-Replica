@@ -124,6 +124,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private String earthReturnKey;
     private int earthReturnPosition;
     private SharedPreferences visualChoices;
+    private LauncherMenuConfig menuDefaults;
     private String selectedScene;
     private boolean sceneForeground;
     private boolean menuWarmupAttempted;
@@ -137,6 +138,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private Runnable menuWarmupCommit, menuWarmupWork;
     private View.OnAttachStateChangeListener menuWarmupAttach;
     private final SharedPreferences.OnSharedPreferenceChangeListener visualPreferenceChanges = (prefs, key) -> {
+        if (this.headerControls != null && (ScenePreferences.SCENE_KEY.equals(key) || ClockFormat.KEY.equals(key)))
+            this.headerControls.invalidateCachedPages();
         if (ScenePreferences.SCENE_KEY.equals(key)) applySelectedScene();
         else if (ClockFormat.KEY.equals(key)) applyClockFormat();
     };
@@ -273,6 +276,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     private final Handler handler = new Handler(Looper.getMainLooper());
     /** The shared monitor publishes cached state; neither menu construction nor drawing queries networking. */
     private final ConnectionMonitor.Listener connectionUpdates = snapshot -> {
+        if (headerControls != null) {
+            headerControls.invalidateCachedPage("Home"); headerControls.invalidateCachedPage("Connection");
+        }
         updateWifiLabel();
         updateConnectionPage(snapshot);
     };
@@ -295,6 +301,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         long begin = System.nanoTime();
         updateInputsButton();
         boolean changed = adapter != null && adapter.refreshInputStates();
+        if ((structureChanged || changed) && headerControls != null) headerControls.invalidateCachedPage("Inputs");
         if ((structureChanged || changed) && headerControls != null && headerControls.isShowing()
                 && "Inputs".equals(headerControls.pageTitle()))
             headerControls.refreshPage();
@@ -350,6 +357,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
+        menuDefaults = cfg.menuDefaults;
         settingsKeycodes = cfg.settingsKeycodes;
         settingsKeyPanel = cfg.settingsKeyPanel;
         COLUMNS = cfg.columns;
@@ -658,7 +666,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
     /** A scene change keeps Home, its menu stack and the owner's app layout alive. */
     private void applySelectedScene() {
         if (root == null || isFinishing()) return;
-        String next = ScenePreferences.current(this);
+        String next = ScenePreferences.current(this, menuDefaults);
         if (next.equals(selectedScene)) return;
         finishEarthExplore(false);
         String previous = selectedScene;
@@ -843,7 +851,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
             return true;
         }
         HeaderStackPopup popup = ensureHeaderControls(p -> new LauncherSettingsStack(this, p, this::headerExternal,
-                () -> showSaturnSettings(p)).show());
+                () -> showSaturnSettings(p), menuDefaults).show());
         if (popup == null) {
             if (!isFinishing()) root.postOnAnimation(this::onLauncherSettingsRequested);
             return true;
@@ -914,7 +922,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
             if (prepared == null) popup.setRoot("Home", () -> headerHome(popup));
         }
         else {
-            popup.setRootMetadata("Home", () -> headerHome(popup));
+            // A prepared popup already owns this fresh Home page; keep it for Back.
+            if (prepared == null) popup.setRootMetadata("Home", () -> headerHome(popup));
             initialPage.accept(popup);
         }
         popup.setOnDismissListener(() -> {
@@ -1029,7 +1038,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
         popup.row(rows, ScenePreferences.icon(selectedScene), "Theme", ScenePreferences.title(selectedScene), this::showSaturnMenu);
         popup.row(rows, R.drawable.ic_picture, "Launcher Setting", null,
                 () -> new LauncherSettingsStack(this, popup, this::headerExternal,
-                        () -> showSaturnSettings(popup)).show());
+                        () -> showSaturnSettings(popup), menuDefaults).show());
         if (moduleCards) popup.row(rows, R.drawable.ic_apps, "Module cards", null, this::showModuleCards);
         popup.row(rows, R.drawable.ic_apps, "Arrange App Cards", "Move cards on Home",
                 () -> headerLocalAction("arrange", lastFocusedKey, () -> showLayoutEditor(lastFocusedKey)));
@@ -1057,7 +1066,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
 
     private View headerScenes(HeaderStackPopup popup) {
         LinearLayout rows = popup.list();
-        String current = ScenePreferences.current(this);
+        String current = ScenePreferences.current(this, menuDefaults);
         SceneSettingsPages settings = new SceneSettingsPages(this, popup, () -> showSaturnSettings(popup));
         String[] ids = {ScenePreferences.SATURN, ScenePreferences.EARTH, ScenePreferences.WEATHER, ScenePreferences.FLIP};
         String[] descriptions = {"Saturn and its moons", "Your location · day and night", "Current local weather", "Animated split-flap clock"};

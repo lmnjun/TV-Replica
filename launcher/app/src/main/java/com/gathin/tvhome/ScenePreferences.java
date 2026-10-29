@@ -15,10 +15,16 @@ final class ScenePreferences {
         return context.getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE);
     }
     static String current(Context context) {
+        return current(context, null);
+    }
+    /** Main/menu callers reuse the defaults of the theme which this Activity actually loaded. */
+    static String current(Context context, LauncherMenuConfig defaults) {
         String saved = preferences(context).getString(SCENE_KEY, "");
         if (SATURN.equals(saved) || EARTH.equals(saved) || WEATHER.equals(saved)
                 || FLIP.equals(saved) || THEME.equals(saved)) return saved;
-        return Config.load(context).saturnScene ? SATURN : THEME;
+        boolean saturn = defaults == null ? Config.load(context).saturnScene
+                : defaults.saturnScene(preferences(context).getAll());
+        return saturn ? SATURN : THEME;
     }
     static String saver(Context context) {
         String saved = preferences(context).getString(SAVER_KEY, FLIP);

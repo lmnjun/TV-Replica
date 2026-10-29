@@ -20,14 +20,21 @@ final class LauncherSettingsStack {
     private final SharedPreferences choices;
     private final Consumer<Intent> external;
     private final SceneSettingsPages sceneSettings;
+    private final LauncherMenuConfig defaults;
     LauncherSettingsStack(Activity activity, HeaderStackPopup popup, Consumer<Intent> external) {
         this(activity, popup, external, null);
     }
     LauncherSettingsStack(Activity activity, HeaderStackPopup popup, Consumer<Intent> external, Runnable saturnSettings) {
+        this(activity, popup, external, saturnSettings, Config.load(activity).menuDefaults);
+    }
+    LauncherSettingsStack(Activity activity, HeaderStackPopup popup, Consumer<Intent> external, Runnable saturnSettings,
+                          LauncherMenuConfig defaults) {
         this.activity = activity; this.popup = popup; this.external = external;
+        this.defaults = defaults;
         choices = activity.getSharedPreferences(Config.SETTINGS_NAME, Activity.MODE_PRIVATE);
         sceneSettings = new SceneSettingsPages(activity, popup, saturnSettings);
     }
+    private LauncherMenuConfig.Values currentValues() { return defaults.resolve(choices.getAll()); }
     void show() { popup.push("Launcher Setting", this::root); }
     private View root() {
         LinearLayout rows = popup.list();
@@ -37,12 +44,12 @@ final class LauncherSettingsStack {
         return rows;
     }
     private View appearance() {
-        Config config = Config.load(activity);
+        LauncherMenuConfig.Values config = currentValues();
         LinearLayout rows = popup.list();
         choices(rows, "Apps per row", config.columns, 4, 4, value -> choices.edit().putInt("columns", value).apply());
         choices(rows, "Rows below dock", config.rowsBelowDock, 0, 4,
                 value -> choices.edit().putInt(Config.ROWS_BELOW_DOCK_KEY, value).apply());
-        popup.row(rows, R.drawable.ic_picture, "Wallpaper", ScenePreferences.title(ScenePreferences.current(activity)),
+        popup.row(rows, R.drawable.ic_picture, "Wallpaper", ScenePreferences.title(ScenePreferences.current(activity, defaults)),
                 () -> popup.push("Wallpaper", this::wallpaper));
         popup.row(rows, R.drawable.ic_scene_clock, "Time format", ClockFormat.is24Hour(activity) ? "24-hour · 23:08" : "12-hour · 11:08 PM",
                 () -> popup.push("Time format", this::timeFormat));
@@ -73,16 +80,17 @@ final class LauncherSettingsStack {
         return rows;
     }
     private View motion() {
-        Config config = Config.load(activity);
+        LauncherMenuConfig.Values config = currentValues();
         LinearLayout rows = popup.list();
         toggle(rows, R.drawable.ic_scene_speed, "Animations", config.animations, () -> {
-            boolean enable = !Config.load(activity).animations;
+            LauncherMenuConfig.Values current = currentValues();
+            boolean enable = !current.animations;
             choices.edit().putBoolean("animations", enable)
-                    .putBoolean("advanced_effects", enable && Config.load(activity).advancedEffects).apply();
+                    .putBoolean("advanced_effects", enable && current.advancedEffects).apply();
         });
         View advanced = popup.row(rows, R.drawable.ic_scene_orbit, "Advanced effects",
                 !config.animations ? "Available when animations are on" : config.advancedEffects ? "On" : "Off", () -> {
-                    if (Config.load(activity).advancedEffects) {
+                    if (currentValues().advancedEffects) {
                         choices.edit().putBoolean("advanced_effects", false).apply(); changed();
                     } else popup.push("Advanced effects", this::confirmAdvanced);
                 });
@@ -123,7 +131,7 @@ final class LauncherSettingsStack {
     }
     private View wallpaper() {
         LinearLayout rows = popup.list();
-        String scene = ScenePreferences.current(activity);
+        String scene = ScenePreferences.current(activity, defaults);
         popup.row(rows, ScenePreferences.icon(scene), "Scenes", ScenePreferences.title(scene),
                 () -> popup.push("Theme", () -> sceneChoices(false)));
         sceneSettings.addEntry(rows, scene);
@@ -181,7 +189,7 @@ final class LauncherSettingsStack {
     }
     private View sceneChoices(boolean saver) {
         LinearLayout rows = popup.list();
-        String current = saver ? ScenePreferences.saver(activity) : ScenePreferences.current(activity);
+        String current = saver ? ScenePreferences.saver(activity) : ScenePreferences.current(activity, defaults);
         String[] ids = saver ? new String[]{ScenePreferences.FLIP, ScenePreferences.EARTH, ScenePreferences.WEATHER, ScenePreferences.CLOCK}
                 : new String[]{ScenePreferences.SATURN, ScenePreferences.EARTH, ScenePreferences.WEATHER, ScenePreferences.FLIP, ScenePreferences.THEME};
         for (String id : ids) {

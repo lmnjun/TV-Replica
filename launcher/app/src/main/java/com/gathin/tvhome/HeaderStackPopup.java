@@ -14,18 +14,19 @@ import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.FocusFinder;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
@@ -43,14 +44,65 @@ final class HeaderStackPopup extends PopupWindow {
     private static final android.content.res.ColorStateList ICON_TINT = android.content.res.ColorStateList.valueOf(0xD9FFFFFF);
     private static final android.content.res.ColorStateList ARROW_TINT = android.content.res.ColorStateList.valueOf(0xAFFFFFFF);
     private static final android.view.animation.Interpolator MOTION_CURVE = new android.view.animation.PathInterpolator(.2f, 0, .2f, 1);
-    // Immutable resource metadata only: every control still gets its own mutated drawable.
-    // No View, account, photo, connection or page survives in this process-level cache.
-    private static Drawable.ConstantState controlBackgroundState;
-    private static float controlBackgroundDensity = Float.NaN;
+    private static final int MAX_RETAINED_PARENTS = 4;
     private static final class Page {
         final String title; final Supplier<View> build; Object focusTag;
+        PageScrollView viewport; View contents; int contentHeight; boolean reusable;
         Page(String title, Supplier<View> build) { this.title = title; this.build = build; }
     }
+    /** Retiring a page blocks its input, without changing every child's enabled/drawable state. */
+    private static final class PageScrollView extends ScrollView {
+        private final int activeDescendants, activeImportance;
+        private boolean interactive = true, touchActive, dispatchingTouch;
+        PageScrollView(Activity activity) {
+            super(activity);
+            setVerticalScrollBarEnabled(false); setClipToPadding(false); setFillViewport(false); setFocusable(false);
+            activeDescendants = getDescendantFocusability(); activeImportance = getImportantForAccessibility();
+        }
+        void setInteractive(boolean interactive) {
+            if (this.interactive == interactive) return;
+            this.interactive = interactive;
+            setDescendantFocusability(interactive ? activeDescendants : FOCUS_BLOCK_DESCENDANTS);
+            setImportantForAccessibility(interactive ? activeImportance : IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+            if (!interactive) {
+                cancelTouchGesture();
+                clearFocus();
+            }
+        }
+        private void cancelTouchGesture() {
+            if (!touchActive || dispatchingTouch) return;
+            touchActive = false;
+            long now = android.os.SystemClock.uptimeMillis();
+            MotionEvent cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0, 0, 0);
+            try { super.dispatchTouchEvent(cancel); }
+            finally { cancel.recycle(); }
+        }
+        @Override public boolean dispatchKeyEvent(KeyEvent event) { return !interactive || super.dispatchKeyEvent(event); }
+        @Override public boolean dispatchTouchEvent(MotionEvent event) {
+            if (!interactive) return false;
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) touchActive = true;
+            else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) touchActive = false;
+            dispatchingTouch = true;
+            try { return super.dispatchTouchEvent(event); }
+            finally { dispatchingTouch = false; if (!interactive) cancelTouchGesture(); }
+        }
+        @Override public boolean dispatchGenericMotionEvent(MotionEvent event) { return interactive && super.dispatchGenericMotionEvent(event); }
+        @Override public boolean dispatchHoverEvent(MotionEvent event) { return interactive && super.dispatchHoverEvent(event); }
+        @Override public boolean performAccessibilityAction(int action, Bundle arguments) {
+            return interactive && super.performAccessibilityAction(action, arguments);
+        }
+    }
+    private static final View.AccessibilityDelegate PAGE_ACTIONS = new View.AccessibilityDelegate() {
+        @Override public boolean performAccessibilityAction(View host, int action, Bundle arguments) {
+            for (View view = host; view != null; ) {
+                if (view instanceof PageScrollView && !((PageScrollView)view).interactive) return false;
+                android.view.ViewParent parent = view.getParent();
+                view = parent instanceof View ? (View)parent : null;
+            }
+            return super.performAccessibilityAction(host, action, arguments);
+        }
+    };
     private static final class FocusState {
         final View view; final int focusable, descendants, accessibilityImportance;
         FocusState(View view) {
@@ -79,7 +131,7 @@ final class HeaderStackPopup extends PopupWindow {
     private View confirmTarget;
     private int confirmGeneration;
     private final MenuTrace timing = new MenuTrace();
-    private View currentBody;
+    private View currentBody, outgoingBody;
     private FrameLayout modalShield;
     private View previousFocus;
     private BitmapDrawable profileGhost;
@@ -189,6 +241,9 @@ final class HeaderStackPopup extends PopupWindow {
             }
         };
         windowRoot.setId(R.id.headerMenuCard);
+        // Compose the small card in one reusable surface. Crossfading pages then uses the
+        // same offscreen pipeline as preparation, instead of a new window shader on Back.
+        windowRoot.setLayerType(animations || warmupOnly ? View.LAYER_TYPE_HARDWARE : View.LAYER_TYPE_NONE, null);
         windowRoot.setOrientation(LinearLayout.VERTICAL);
         chrome = new FrameLayout(activity);
         windowRoot.addView(chrome, new LinearLayout.LayoutParams(-1, -1));
@@ -259,6 +314,9 @@ final class HeaderStackPopup extends PopupWindow {
             prepared.startWidth = Math.min(source.getWidth(), prepared.fullWidth);
             prepared.windowRoot.setAlpha(1);
             prepared.setRoot("Home", () -> home.apply(menu));
+            final View homeViewport = prepared.currentBody;
+            final int homeHeight = prepared.fullHeight;
+            final int homeBodyHeight = homeViewport.getLayoutParams().height;
             source.avatarBounds(prepared.sourceAvatar);
             Bitmap profile = source.captureProfileLayer();
             if (profile != null) {
@@ -284,21 +342,28 @@ final class HeaderStackPopup extends PopupWindow {
                     new FrameLayout.LayoutParams(prepared.fullWidth, prepared.fullHeight));
             root.addView(hidden, new FrameLayout.LayoutParams(prepared.fullWidth, prepared.maximumHeight));
             if (!target.isAttachedToWindow() || !target.isHardwareAccelerated()) return false;
-            // Only the wrapper is a forced layer. Keep the card's normal NONE layer type so
-            // its real outline, body alpha and profile ghost draw together into this target.
+            // Match the real page and card layers; the wrapper only submits their hidden draw.
+            // The card's normal outline, body alpha and ghost remain in the same hierarchy.
             target.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-            prepared.windowRoot.setLayerType(View.LAYER_TYPE_NONE, null);
+            prepared.windowRoot.setLayerType(View.LAYER_TYPE_HARDWARE, null);
             for (int page = 0; page < 2; page++) {
                 if (page == 1) prepared.push("Settings", () -> settings.apply(menu));
+                int reservedHeight = prepared.fullHeight;
+                if (page == 1) {
+                    // Match Back's two endpoints without navigating or requesting real focus.
+                    reservedHeight = Math.max(homeHeight, prepared.fullHeight);
+                    prepared.setBodyHeight(Math.max(homeBodyHeight, prepared.currentBody.getLayoutParams().height));
+                    prepared.expandedHeight = prepared.fullHeight + (homeHeight - prepared.fullHeight) * .35f;
+                }
                 ViewGroup.LayoutParams card = prepared.windowRoot.getLayoutParams();
-                card.height = prepared.fullHeight;
+                card.height = reservedHeight;
                 prepared.windowRoot.setLayoutParams(card);
-                int w = prepared.fullWidth, h = prepared.fullHeight;
+                int w = prepared.fullWidth, h = reservedHeight;
                 hidden.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
                         View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
                 hidden.layout(0, 0, w, h);
                 prepared.updateGhostTarget();
-                View first = prepared.firstFocusable(prepared.currentBody);
+                View first = prepared.firstFocusable(homeViewport);
                 Drawable background = first == null ? null : first.getBackground();
                 if (background != null) {
                     // Exercise the private page's focused paint without moving focus or
@@ -306,9 +371,17 @@ final class HeaderStackPopup extends PopupWindow {
                     background.setState(new int[]{android.R.attr.state_enabled, android.R.attr.state_focused});
                     background.invalidateSelf(); first.invalidate();
                 }
-                // One .7 translucent state per page bounds synchronous startup work while exercising
-                // the grouped body alpha and visible profile ghost; cache coverage is not guaranteed.
-                prepared.apply(.7f);
+                if (page == 0) {
+                    // Opening combines the real Home page layer with grouped body alpha and ghost.
+                    prepared.apply(.7f);
+                } else {
+                    // At Back, body is opaque/NONE while two page layers overlap. Exercise that
+                    // blend separately; the extra wrapper remains private and fully invisible.
+                    prepared.apply(1);
+                    prepared.currentBody.setAlpha(.65f); prepared.currentBody.setTranslationY(0);
+                    homeViewport.setAlpha(.35f); homeViewport.setTranslationY(prepared.dp(2) * .65f);
+                    homeViewport.bringToFront();
+                }
                 // apply() invalidates the actual material and outline, not just node alpha.
                 prepared.windowRoot.invalidate();
                 target.invalidate();
@@ -351,7 +424,7 @@ final class HeaderStackPopup extends PopupWindow {
         clearOpeningPreDraw(); cancelPageAnimator();
         if (profileGhost != null) { panel.getOverlay().remove(profileGhost); profileGhost = null; }
         windowRoot.setLayerType(View.LAYER_TYPE_NONE, null);
-        pages.clear();
+        body.removeAllViews(); currentBody = null; outgoingBody = null; pages.clear();
     }
 
     /** Abandon a never-shown, detached menu without changing Home or firing dismissal actions. */
@@ -361,6 +434,7 @@ final class HeaderStackPopup extends PopupWindow {
         try {
             cancelMenuAction(); clearOpeningPreDraw(); cancelPageAnimator();
             body.removeAllViews(); currentBody = null; pages.clear();
+            windowRoot.setLayerType(View.LAYER_TYPE_NONE, null);
             pendingAction = null; onClosed = null; transition = null; motion = null;
         } finally { sounds.close(); }
     }
@@ -390,11 +464,19 @@ final class HeaderStackPopup extends PopupWindow {
     boolean hasPendingAction() { return pendingAction != null; }
     boolean wasInterrupted() { return interrupted; }
     String pageTitle() { return pages.isEmpty() ? "" : pages.get(pages.size() - 1).title; }
-    void markChanged() { dirty = true; updateFooter(); }
+    void markChanged() { dirty = true; invalidateCachedPages(); updateFooter(); }
+    void invalidateCachedPages() {
+        for (Page page : pages) page.reusable = false;
+        trimRetainedParents();
+    }
+    void invalidateCachedPage(String title) {
+        for (Page page : pages) if (page.title.equals(title)) page.reusable = false;
+        trimRetainedParents();
+    }
     void setRootMetadata(String title, Supplier<View> build) { pages.clear(); pages.add(new Page(title, build)); }
     void setRoot(String title, Supplier<View> build) { pages.clear(); pages.add(new Page(title, build)); renderPage(false); }
     void push(String title, Supplier<View> build) { rememberFocus(); pages.add(new Page(title, build)); renderPage(true); }
-    void refreshPage() { rememberFocus(); renderPage(true); }
+    void refreshPage() { rememberFocus(); invalidateCachedPages(); renderPage(true); }
     void backPage() { navigateBack(); }
 
     LinearLayout list() {
@@ -409,57 +491,28 @@ final class HeaderStackPopup extends PopupWindow {
         return text;
     }
     View row(LinearLayout rows, int icon, String label, String detail, Runnable action) {
-        // Exact overlay bounds avoid LinearLayout's weighted second measure pass. Keep real
-        // TextViews so font fallback, bidi, ellipsizing and accessibility remain platform-owned.
-        FrameLayout row = new FrameLayout(activity);
-        row.setPadding(dp(12), 0, dp(12), 0); row.setTag(label); control(row);
-        if (icon != 0) {
-            ImageView image = new ImageView(activity); image.setImageResource(icon);
-            image.setImageTintList(ICON_TINT);
-            image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(image, new FrameLayout.LayoutParams(dp(21), dp(21), Gravity.START | Gravity.CENTER_VERTICAL));
-        }
-        LinearLayout copy = new LinearLayout(activity); copy.setOrientation(LinearLayout.VERTICAL);
+        // One row owns its two native labels; icons need no extra Views or layout passes.
+        // Font fallback, bidi, ellipsizing and accessibility remain platform-owned.
         TextView name = text(label, 13, 500, 0xF2FFFFFF); name.setSingleLine(true); name.setEllipsize(TextUtils.TruncateAt.END);
-        copy.addView(name);
+        TextView note = null;
         if (detail != null && !detail.isEmpty()) {
-            TextView note = text(detail, 10, 400, 0xAFFFFFFF);
+            note = text(detail, 10, 400, 0xAFFFFFFF);
             note.setSingleLine(true); note.setEllipsize(TextUtils.TruncateAt.END);
-            LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2); noteLp.topMargin = dp(4);
-            copy.addView(note, noteLp);
         }
-        FrameLayout.LayoutParams copyLp = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER_VERTICAL);
-        copyLp.setMarginStart(icon == 0 ? 0 : dp(21) + dp(12));
-        copyLp.setMarginEnd(dp(15) + dp(8)); row.addView(copy, copyLp);
-        ImageView arrow = new ImageView(activity); arrow.setImageResource(R.drawable.ic_chevron_right);
-        arrow.setImageTintList(ARROW_TINT);
-        arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        FrameLayout.LayoutParams arrowLp = new FrameLayout.LayoutParams(dp(15), dp(15), Gravity.END | Gravity.CENTER_VERTICAL);
-        row.addView(arrow, arrowLp);
+        MenuRow row = new MenuRow(activity, name, note, icon == 0 ? null : activity.getDrawable(icon),
+                activity.getDrawable(R.drawable.ic_chevron_right), ICON_TINT, ARROW_TINT);
+        row.enableGlyphBitmapCache(icon, R.drawable.ic_chevron_right);
+        row.setTag(label); control(row);
         row.setOnKeyListener((v, key, event) -> key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT);
         row.setContentDescription(label + (detail == null || detail.isEmpty() ? "" : ", " + detail));
-        row.setOnClickListener(v -> { pointerSound(); if (action != null) action.run(); });
+        row.setOnClickListener(v -> { if (isCurrentControl(v)) { pointerSound(); if (action != null) action.run(); } });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(detail == null || detail.isEmpty() ? 40 : 48));
         lp.bottomMargin = dp(4); rows.addView(row, lp); return row;
     }
 
     void control(View view) {
-        if (controlBackgroundState == null || controlBackgroundDensity != density) {
-            android.graphics.drawable.StateListDrawable states = new android.graphics.drawable.StateListDrawable();
-            android.graphics.drawable.GradientDrawable active = new android.graphics.drawable.GradientDrawable();
-            active.setColor(0x295D5D5D); active.setCornerRadius(dp(12));
-            active.setStroke(Math.max(1, dp(1.2f)), 0xC9FFFFFF);
-            android.graphics.drawable.GradientDrawable normal = new android.graphics.drawable.GradientDrawable();
-            normal.setColor(0x09181818); normal.setCornerRadius(dp(12));
-            android.graphics.drawable.GradientDrawable selected = new android.graphics.drawable.GradientDrawable();
-            selected.setColor(0x25484848); selected.setCornerRadius(dp(12));
-            selected.setStroke(Math.max(1, dp(.9f)), 0x80FFFFFF);
-            states.addState(new int[]{android.R.attr.state_focused}, active);
-            states.addState(new int[]{android.R.attr.state_selected}, selected); states.addState(new int[]{}, normal);
-            controlBackgroundState = states.getConstantState(); controlBackgroundDensity = density;
-        }
-        // The template already stores this display's pixel dimensions; do not density-scale twice.
-        view.setBackground(controlBackgroundState.newDrawable().mutate());
+        view.setBackground(new MenuControlBackground(density));
+        view.setAccessibilityDelegate(PAGE_ACTIONS);
         view.setFocusable(true); view.setClickable(true); view.setSoundEffectsEnabled(false);
     }
 
@@ -491,33 +544,45 @@ final class HeaderStackPopup extends PopupWindow {
         cancelMenuAction();
         final int generation = ++pageGeneration;
         cancelPageAnimator();
-        for (int i = body.getChildCount() - 1; i >= 0; i--) {
-            View child = body.getChildAt(i);
-            if (child != currentBody) body.removeViewAt(i);
-        }
         Page page = pages.get(pages.size() - 1);
         timing.point("page_request:" + page.title);
         // The surface itself is a focus fallback only for a page with no controls.
         windowRoot.setFocusableInTouchMode(false); windowRoot.setFocusable(false);
         windowRoot.setContentDescription(null);
         updateFooter();
-        ScrollView scroll = new ScrollView(activity); scroll.setVerticalScrollBarEnabled(false);
-        scroll.setClipToPadding(false); scroll.setFillViewport(false); scroll.setFocusable(false);
-        View contents;
-        long build = timing.begin("page_build:" + page.title);
-        try { contents = page.build.get(); }
-        finally { timing.end("page_build:" + page.title, build); }
-        scroll.addView(contents);
+        boolean reuse = page.reusable && page.viewport != null && page.viewport != currentBody;
+        final PageScrollView scroll;
+        final View contents;
+        if (reuse) {
+            scroll = page.viewport; contents = page.contents;
+            // Attached ancestors no longer get onAttachedToWindow again on Back.
+            View identity = contents.findViewWithTag("Current profile");
+            if (identity instanceof ProfilePill) ((ProfilePill)identity).refresh();
+            timing.point("page_reuse:" + page.title);
+        } else {
+            scroll = new PageScrollView(activity);
+            long build = timing.begin("page_build:" + page.title);
+            try { contents = page.build.get(); }
+            finally { timing.end("page_build:" + page.title, build); }
+            scroll.addView(contents);
+            page.viewport = scroll; page.contents = contents;
+        }
+        // Keep this small layer for the current page and up to four valid ancestors. Hidden
+        // ancestors stay in the same window tree, so Back need not allocate their layer again.
+        scroll.setLayerType(animations || warmupOnly ? View.LAYER_TYPE_HARDWARE : View.LAYER_TYPE_NONE, null);
+        scroll.setInteractive(true); scroll.setAlpha(1); scroll.setTranslationY(0);
         int contentWidth = fullWidth - panel.getPaddingLeft() - panel.getPaddingRight();
         int exactWidth = View.MeasureSpec.makeMeasureSpec(contentWidth, View.MeasureSpec.EXACTLY);
         int naturalHeight = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
-        long measure = timing.begin("page_measure:" + page.title);
-        try {
-            contents.measure(exactWidth, naturalHeight);
-        } finally { timing.end("page_measure:" + page.title, measure); }
+        if (!reuse || contents.isLayoutRequested()) {
+            long measure = timing.begin("page_measure:" + page.title);
+            try { contents.measure(exactWidth, naturalHeight); page.contentHeight = contents.getMeasuredHeight(); }
+            finally { timing.end("page_measure:" + page.title, measure); }
+        }
+        page.reusable = true;
         int chromeHeight = panel.getPaddingTop() + panel.getPaddingBottom()
                 + (dirty ? dp(20) : 0);
-        fullHeight = Math.min(maximumHeight, Math.max(dp(34), chromeHeight + contents.getMeasuredHeight()));
+        fullHeight = Math.min(maximumHeight, Math.max(dp(34), chromeHeight + page.contentHeight));
         final int bodyHeight = Math.max(0, fullHeight - chromeHeight);
         View old = currentBody;
         boolean transitionPages = animate && isShowing() && animations && windowRoot.getAlpha() > 0;
@@ -530,7 +595,15 @@ final class HeaderStackPopup extends PopupWindow {
         setBodyHeight(reservedBodyHeight);
         if (old != null) retirePage(old);
         currentBody = scroll;
-        body.addView(scroll, new FrameLayout.LayoutParams(-1, bodyHeight));
+        outgoingBody = transitionPages ? old : null;
+        if (scroll.getParent() == body) {
+            FrameLayout.LayoutParams layout = (FrameLayout.LayoutParams)scroll.getLayoutParams();
+            if (layout.width != -1 || layout.height != bodyHeight) {
+                layout.width = -1; layout.height = bodyHeight; scroll.setLayoutParams(layout);
+            }
+        } else body.addView(scroll, new FrameLayout.LayoutParams(-1, bodyHeight));
+        scroll.bringToFront();
+        trimRetainedParents();
         // Reserve only the larger endpoint once, then resize the actual window at rest.
         if (isShowing()) resizeWindow(Math.max(windowHeight, reservedBodyHeight + chromeHeight));
         if (transitionPages) {
@@ -552,7 +625,8 @@ final class HeaderStackPopup extends PopupWindow {
             pageAnimator.addListener(new AnimatorListenerAdapter() {
                 @Override public void onAnimationEnd(Animator animation) {
                     if (generation != pageGeneration) return;
-                    if (old != null) body.removeView(old);
+                    outgoingBody = null;
+                    trimRetainedParents();
                     setBodyHeight(bodyHeight);
                     expandedHeight = fullHeight; pageMotion = false; pageAnimator = null;
                     apply(shape); publishTransition(); settleWindow();
@@ -560,10 +634,9 @@ final class HeaderStackPopup extends PopupWindow {
             });
             pageAnimator.start();
         } else {
-            if (old != null) body.removeView(old);
             expandedHeight = fullHeight; pageMotion = false; apply(shape); publishTransition(); settleWindow();
         }
-        LauncherSounds.muteSystemEffects(scroll);
+        if (!reuse) LauncherSounds.muteSystemEffects(scroll);
         if (!warmupOnly) scroll.postOnAnimation(() -> {
             if (generation != pageGeneration || closing) return;
             updateGhostTarget();
@@ -576,6 +649,7 @@ final class HeaderStackPopup extends PopupWindow {
             pageAnimator.removeAllListeners(); pageAnimator.cancel(); pageAnimator = null;
         }
         pageMotion = false;
+        outgoingBody = null;
     }
 
     private void setBodyHeight(int height) {
@@ -612,14 +686,42 @@ final class HeaderStackPopup extends PopupWindow {
     }
 
     private void retirePage(View view) {
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup)view;
-            group.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
-            for (int i = 0; i < group.getChildCount(); i++) retirePage(group.getChildAt(i));
+        if (view instanceof PageScrollView) {
+            ((PageScrollView)view).setInteractive(false);
+            // Cancel already-posted clicks too; a dispatch gate alone cannot retract those.
+            view.cancelPendingInputEvents();
         }
-        view.clearFocus(); view.setFocusable(false); view.setEnabled(false);
-        view.setClickable(false); view.setLongClickable(false);
-        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+    }
+
+    private void trimRetainedParents() {
+        int retained = 0;
+        for (int i = pages.size() - 2; i >= 0; i--) {
+            Page page = pages.get(i);
+            boolean keep = page.reusable && page.viewport != null && ++retained <= MAX_RETAINED_PARENTS;
+            if (!keep && page.viewport != currentBody && page.viewport != outgoingBody) {
+                if (page.viewport != null && page.viewport.getParent() == body) body.removeView(page.viewport);
+                page.viewport = null; page.contents = null; page.reusable = false;
+            }
+        }
+        for (int i = body.getChildCount() - 1; i >= 0; i--) {
+            View child = body.getChildAt(i);
+            if (child == currentBody || child == outgoingBody) continue;
+            if (isRetainedParent(child)) {
+                if (((PageScrollView)child).interactive) retirePage(child);
+                child.setAlpha(0); child.setTranslationY(0);
+            } else body.removeViewAt(i);
+        }
+    }
+
+    private boolean isRetainedParent(View view) {
+        int retained = 0;
+        for (int i = pages.size() - 2; i >= 0; i--) {
+            Page page = pages.get(i);
+            if (!page.reusable || page.viewport == null) continue;
+            if (++retained > MAX_RETAINED_PARENTS) return false;
+            if (page.viewport == view) return true;
+        }
+        return false;
     }
 
     private View firstFocusable(View view) {
@@ -666,7 +768,13 @@ final class HeaderStackPopup extends PopupWindow {
         if (closing || finished) return;
         cancelMenuAction();
         closing = true; pendingAction = action;
-        cancelPageAnimator(); animate(true);
+        View closingPage = outgoingBody;
+        cancelPageAnimator();
+        // Freeze both cross-fading pages until close finishes; the incoming page may be alpha zero.
+        outgoingBody = closingPage;
+        trimRetainedParents();
+        // No menu pixels have been revealed yet. Do not wait for an invisible close animation.
+        if (openingPreDraw != null) finishDismiss(); else animate(true);
     }
     void dismissImmediately() {
         if (finished) return; interrupted = true; closing = true; pendingAction = null;
@@ -717,13 +825,15 @@ final class HeaderStackPopup extends PopupWindow {
                 clearOpeningPreDraw();
                 timing.point("first_pre_draw");
                 if (showing && !closing && !finished) {
-                    updateGhostTarget(); apply(0);
-                    windowRoot.setAlpha(1); source.setAlpha(0); animate(false);
+                    updateGhostTarget(); apply(shape);
+                    windowRoot.setAlpha(1); source.setAlpha(0);
                 }
                 return true;
             }
         };
         openingObserver.addOnPreDrawListener(openingPreDraw);
+        // Start before traversal: its first animation tick and reveal can share one vsync.
+        animate(false);
     }
     private float width() { return startWidth + (fullWidth - startWidth) * shape; }
     private float height() { return dp(34) + (expandedHeight - dp(34)) * shape; }
@@ -849,6 +959,8 @@ final class HeaderStackPopup extends PopupWindow {
         if (modalShield != null) {
             root.removeView(modalShield); modalShield.removeAllViews(); modalShield = null;
         }
+        body.removeAllViews(); currentBody = null; pages.clear();
+        windowRoot.setLayerType(View.LAYER_TYPE_NONE, null);
         restoreUnderlayFocus();
         shapeMotion = false; pageMotion = false; publishTransition();
         if (motion != null) motion.accept(0);
