@@ -1038,7 +1038,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
 
     private View headerInputs(HeaderStackPopup popup) {
         LinearLayout rows = popup.list();
-        for (HdmiInputs.Port port : HdmiInputs.read(this)) {
+        HdmiInputs.Snapshot snapshot = HdmiInputs.snapshot(this);
+        for (HdmiInputs.Port port : snapshot.ports) {
             String detail = HdmiInputs.stateLabel(port.state) + (port.deviceName.isEmpty() ? "" : " · " + port.deviceName);
             popup.row(rows, R.drawable.ic_input, port.title, detail, () -> {
                 String input = HdmiInputs.resolveInputId(this, port.number);
@@ -1047,15 +1048,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener, S
                 else Toast.makeText(this, port.title + " unavailable", Toast.LENGTH_SHORT).show();
             });
         }
-        TvInputManager manager = (TvInputManager)getSystemService(TV_INPUT_SERVICE);
-        for (TvInputInfo input : HdmiInputs.list(manager)) {
-            if (input.getType() == TvInputInfo.TYPE_HDMI || !input.isPassthroughInput()) continue;
-            try { if (input.isHidden(this)) continue; } catch (RuntimeException ignored) {}
-            String label = HdmiInputs.label(this, input, true);
-            if (label.isEmpty()) label = HdmiInputs.label(this, input, false);
-            String id = input.getId();
-            popup.row(rows, R.drawable.ic_av, label.isEmpty() ? "External input" : label, "External input",
-                    () -> popup.dismissThen(() -> openInput(id)));
+        for (HdmiInputs.External input : snapshot.external) {
+            popup.row(rows, R.drawable.ic_av, input.label, "External input",
+                    () -> popup.dismissThen(() -> openInput(input.id)));
         }
         return rows;
     }

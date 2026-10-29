@@ -19,6 +19,28 @@ final class HdmiInputs {
     static final int UNKNOWN = -1;
     private static final Pattern PORT_LABEL = Pattern.compile("(?i)\\bHDMI\\s*[-_:]?\\s*([1-3])\\b");
     private static final Map<Integer,String> LOGGED_IDENTITIES=new LinkedHashMap<>();
+    private static volatile Snapshot latest;
+
+    static final class External {
+        final String id, label;
+        External(String id, String label) { this.id=id; this.label=label; }
+    }
+    /** Display data only: no Context, framework input, View or mutable caller list is retained. */
+    static final class Snapshot {
+        final List<Port> ports;
+        final List<External> external;
+        Snapshot(List<Port> ports, List<External> external) {
+            this.ports=Collections.unmodifiableList(new ArrayList<>(ports));
+            this.external=Collections.unmodifiableList(new ArrayList<>(external));
+        }
+    }
+
+    /** Resume/input callbacks refresh through read(); page construction reuses that complete snapshot. */
+    static Snapshot snapshot(Context context) {
+        Snapshot saved=latest;
+        if(saved==null){read(context);saved=latest;}
+        return saved;
+    }
 
     static final class Port {
         final int number, state;
@@ -93,7 +115,18 @@ final class HdmiInputs {
             Port port=new Port(number,effective,name,identity,root.getId(),launch,metadata);
             logIdentity(port);result.add(port);
         }
-        return Collections.unmodifiableList(result);
+        List<External> external=new ArrayList<>();
+        for(TvInputInfo input:inputs){
+            if(input.getType()==TvInputInfo.TYPE_HDMI||!input.isPassthroughInput())continue;
+            try{if(input.isHidden(context))continue;}catch(RuntimeException ignored){}
+            String name=label(context,input,true);
+            if(name.isEmpty())name=label(context,input,false);
+            external.add(new External(input.getId(),name.isEmpty()?"External input":name));
+        }
+        // Always scan afresh above. During a coalesced callback, readers keep the last known
+        // complete state until the existing post-transition refresh publishes its replacement.
+        Snapshot snapshot=new Snapshot(result,external);latest=snapshot;
+        return snapshot.ports;
     }
 
     private static synchronized void logIdentity(Port port){

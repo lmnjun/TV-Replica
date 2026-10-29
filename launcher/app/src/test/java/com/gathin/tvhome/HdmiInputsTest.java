@@ -1,6 +1,8 @@
 package com.gathin.tvhome;
 
 import org.junit.Test;
+import java.util.ArrayList;
+import java.util.List;
 import static org.junit.Assert.*;
 
 public final class HdmiInputsTest {
@@ -28,5 +30,19 @@ public final class HdmiInputsTest {
         assertEquals(1,HdmiInputs.effectiveState(1,2));
         assertEquals(2,HdmiInputs.effectiveState(2,-1));
         assertEquals(-1,HdmiInputs.effectiveState(-1,-1));
+    }
+    @Test public void snapshotRetainsACompleteImmutableDisplayCopy(){
+        List<HdmiInputs.Port> ports=new ArrayList<>();
+        ports.add(new HdmiInputs.Port(1,0,"Player","root","child"));
+        List<HdmiInputs.External> external=new ArrayList<>();
+        external.add(new HdmiInputs.External("av","Console"));
+        HdmiInputs.Snapshot snapshot=new HdmiInputs.Snapshot(ports,external);
+        ports.clear();external.clear();
+        assertEquals("Player",snapshot.ports.get(0).deviceName);
+        assertEquals("child",snapshot.ports.get(0).inputId);
+        assertEquals("Console",snapshot.external.get(0).label);
+        assertEquals("av",snapshot.external.get(0).id);
+        try{snapshot.ports.clear();fail("Mutable HDMI snapshot");}catch(UnsupportedOperationException expected){}
+        try{snapshot.external.clear();fail("Mutable external-input snapshot");}catch(UnsupportedOperationException expected){}
     }
 }
